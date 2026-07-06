@@ -1,0 +1,142 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --cb-bg: #0a0a0c;
+  --cb-bg-elevated: #121214;
+  --cb-surface: rgba(20, 20, 24, 0.88);
+  --cb-surface-solid: #16161a;
+  --cb-sidebar: #0e0e10;
+  --cb-neon-cyan: #c9a962;
+  --cb-neon-blue: #a89060;
+  --cb-neon-purple: #e8d5a3;
+  --cb-accent: #c9a962;
+  --cb-gold-dark: #8b7355;
+  --cb-text: #f5f3ef;
+  --cb-text-muted: #8a8880;
+  --cb-text-dim: #b8b5ad;
+  --cb-border: rgba(201, 169, 98, 0.2);
+  --cb-border-hover: rgba(201, 169, 98, 0.42);
+  --cb-glow-cyan: 0 8px 32px rgba(201, 169, 98, 0.12);
+  --cb-shadow-elevated: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --cb-font-display: 'Cormorant Garamond', 'Noto Serif SC', serif;
+  --cb-font-body: 'Inter', 'PingFang SC', sans-serif;
+  --cb-font-mono: 'Inter', sans-serif;
+  --cb-radius: 4px;
+
+  --el-color-primary: #c9a962;
+  --el-color-primary-light-3: #d4b978;
+  --el-color-primary-light-5: #dfc98e;
+  --el-color-primary-light-7: #ead9a4;
+  --el-color-primary-light-9: #f5e9ba;
+  --el-color-primary-dark-2: #a89060;
+  --el-bg-color: #16161a;
+  --el-bg-color-page: #0a0a0c;
+  --el-bg-color-overlay: rgba(18, 18, 22, 0.96);
+  --el-text-color-primary: #f5f3ef;
+  --el-text-color-regular: #b8b5ad;
+  --el-text-color-secondary: #8a8880;
+  --el-text-color-placeholder: #6a6860;
+  --el-border-color: rgba(201, 169, 98, 0.18);
+  --el-border-color-light: rgba(201, 169, 98, 0.1);
+  --el-fill-color-blank: rgba(22, 22, 26, 0.92);
+  --el-fill-color-light: rgba(201, 169, 98, 0.06);
+  --el-fill-color-lighter: rgba(201, 169, 98, 0.04);
+  --el-mask-color: rgba(8, 8, 10, 0.78);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  font-family: var(--cb-font-body);
+  background: var(--cb-bg);
+  color: var(--cb-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 0%, rgba(201, 169, 98, 0.06), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 90% 100%, rgba(139, 115, 85, 0.04), transparent 45%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+.el-button--primary {
+  background: linear-gradient(135deg, #c9a962, #a89060) !important;
+  border: 1px solid rgba(201, 169, 98, 0.35) !important;
+  box-shadow: 0 4px 20px rgba(201, 169, 98, 0.2);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #0a0a0c !important;
+}
+
+.el-button--primary:hover {
+  box-shadow: 0 6px 28px rgba(201, 169, 98, 0.32);
+  filter: brightness(1.05);
+}
+
+.el-card {
+  background: var(--cb-surface) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--cb-border) !important;
+  border-radius: var(--cb-radius) !important;
+  color: var(--cb-text);
+  box-shadow: var(--cb-shadow-elevated);
+}
+
+.el-input__wrapper,
+.el-select__wrapper {
+  background: rgba(18, 18, 22, 0.95) !important;
+  box-shadow: 0 0 0 1px var(--cb-border) inset !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--cb-accent) inset, var(--cb-glow-cyan) !important;
+}
+
+.el-table {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: rgba(18, 18, 22, 0.6);
+  --el-table-header-bg-color: rgba(201, 169, 98, 0.06);
+  --el-table-row-hover-bg-color: rgba(201, 169, 98, 0.06);
+  --el-table-border-color: var(--cb-border);
+  --el-fill-color-lighter: rgba(201, 169, 98, 0.03);
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: rgba(201, 169, 98, 0.03);
+}
+
+.el-statistic__head {
+  color: var(--cb-text-muted) !important;
+  font-family: var(--cb-font-body);
+  font-size: 12px !important;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.el-statistic__content {
+  font-family: var(--cb-font-display) !important;
+  color: var(--cb-accent) !important;
+}
+
+.el-dialog {
+  border-radius: var(--cb-radius) !important;
+  border: 1px solid var(--cb-border);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
