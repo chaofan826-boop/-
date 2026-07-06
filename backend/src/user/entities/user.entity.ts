@@ -14,6 +14,11 @@ export enum UserRole {
   CUSTOMER = 'customer',
 }
 
+export enum UserStatus {
+  ACTIVE = 'active',
+  FROZEN = 'frozen',
+}
+
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn()
@@ -36,6 +41,15 @@ export class User {
 
   @Column({ type: 'enum', enum: UserRole, default: UserRole.CUSTOMER })
   role: UserRole;
+
+  @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
+  status: UserStatus;
+
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  region: string | null;
+
+  @Column({ name: 'last_active_at', type: 'datetime', nullable: true })
+  lastActiveAt: Date | null;
 
   @OneToMany(() => Order, (order) => order.user)
   orders: Order[];

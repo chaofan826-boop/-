@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { RedisService } from '../common/redis/redis.service';
-import { UserRole } from '../user/entities/user.entity';
+import { validatePhoneForRegion, normalizePhone } from '../common/utils/phone.util';
+import { UserRole, UserStatus } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -25,6 +26,7 @@ export interface AuthTokenResult {
     id: number;
     email: string | null;
     phone: string | null;
+    region: string | null;
     name: string;
     avatar: string | null;
     role: UserRole;
@@ -41,24 +43,41 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthTokenResult> {
-    if (!dto.email && !dto.phone) {
-      throw new BadRequestException('Email or phone is required');
+    if (dto.email) {
+      const user = await this.userService.create({
+        email: dto.email.trim(),
+        password: dto.password,
+        name: dto.name,
+        role: UserRole.CUSTOMER,
+      });
+      return this.buildAuthResponse(user);
     }
-    const user = await this.userService.create({
-      email: dto.email,
-      phone: dto.phone,
-      password: dto.password,
-      name: dto.name,
-      role: UserRole.CUSTOMER,
-    });
-    return this.buildAuthResponse(user);
+
+    if (dto.phone && dto.region) {
+      validatePhoneForRegion(dto.region, dto.phone);
+      const phone = normalizePhone(dto.region, dto.phone);
+      const user = await this.userService.create({
+        phone,
+        region: dto.region,
+        password: dto.password,
+        name: dto.name,
+        role: UserRole.CUSTOMER,
+      });
+      return this.buildAuthResponse(user);
+    }
+
+    throw new BadRequestException('请填写邮箱，或选择地区并填写手机号');
   }
 
   async login(dto: LoginDto): Promise<AuthTokenResult> {
     const user = await this.userService.findByAccount(dto.account.trim());
     if (!user || !(await bcrypt.compare(dto.password, user.password))) {
-      throw new UnauthorizedException('Invalid account or password');
+      throw new UnauthorizedException('账号或密码错误');
     }
+    if (user.status === UserStatus.FROZEN) {
+      throw new UnauthorizedException('账号已被冻结');
+    }
+    await this.userService.touchLastActive(user.id);
     return this.buildAuthResponse(this.userService.sanitizeUser(user));
   }
 
@@ -86,6 +105,7 @@ export class AuthService {
     id: number;
     email: string | null;
     phone: string | null;
+    region?: string | null;
     name: string;
     avatar?: string | null;
     role: UserRole;
@@ -110,6 +130,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         phone: user.phone,
+        region: user.region ?? null,
         name: user.name,
         avatar: user.avatar ?? null,
         role: user.role,

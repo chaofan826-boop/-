@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDashboardOverview, getHotProducts } from '@/api/dashboard'
+import DashboardRankingCard from '@/components/DashboardRankingCard.vue'
+import { getDashboardOverview } from '@/api/dashboard'
 import { getProducts } from '@/api/product'
-import type { HotProductRankItem, HotProductsPeriod } from '@/types/dashboard'
+import type { HotProductsPeriod } from '@/types/dashboard'
 
 const router = useRouter()
 
@@ -15,9 +16,7 @@ const stats = ref({
   totalSales: 0,
   pendingShipmentCount: 0,
 })
-const rankingLoading = ref(false)
-const ranking = ref<HotProductRankItem[]>([])
-const rankingDate = ref('')
+
 const period = ref<HotProductsPeriod>('day')
 const selectedDate = ref(new Date())
 
@@ -34,28 +33,11 @@ const datePickerPlaceholder = computed(() => {
   return '选择日期'
 })
 
-const rangeLabel = computed(() => {
-  if (!rankingDate.value) return ''
-  if (period.value === 'day') return `${rankingDate.value} 当日销量`
-  if (period.value === 'month') return `${rankingDate.value} 当月销量`
-  return `${rankingDate.value} 年度销量`
+const rangeSuffix = computed(() => {
+  if (period.value === 'day') return '当日'
+  if (period.value === 'month') return '当月'
+  return '年度'
 })
-
-function formatQueryDate(date: Date, currentPeriod: HotProductsPeriod) {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  if (currentPeriod === 'year') return String(y)
-  if (currentPeriod === 'month') return `${y}-${m}`
-  return `${y}-${m}-${d}`
-}
-
-function rankClass(rank: number) {
-  if (rank === 1) return 'rank-gold'
-  if (rank === 2) return 'rank-silver'
-  if (rank === 3) return 'rank-bronze'
-  return ''
-}
 
 async function loadStats() {
   const [overview, res, activeRes] = await Promise.all([
@@ -76,30 +58,8 @@ function goPendingShipment() {
   router.push({ path: '/orders', query: { status: 'paid' } })
 }
 
-async function loadHotProducts() {
-  rankingLoading.value = true
-  try {
-    const res = await getHotProducts({
-      period: period.value,
-      date: formatQueryDate(selectedDate.value, period.value),
-    })
-    ranking.value = res.list
-    rankingDate.value = res.date
-  } finally {
-    rankingLoading.value = false
-  }
-}
-
-watch(period, () => {
-  loadHotProducts()
-})
-
-watch(selectedDate, () => {
-  loadHotProducts()
-})
-
 onMounted(async () => {
-  await Promise.all([loadStats(), loadHotProducts()])
+  await loadStats()
 })
 </script>
 
@@ -156,71 +116,53 @@ onMounted(async () => {
       </el-col>
     </el-row>
 
-    <div class="ranking-card">
-      <div class="ranking-header">
-        <div>
-          <p class="section-tag">SALES RANKING</p>
-          <h3 class="section-title">热销商品排行榜</h3>
-          <p v-if="rangeLabel" class="section-sub">{{ rangeLabel }} · Top 10</p>
-        </div>
-        <div class="ranking-filters">
-          <el-radio-group v-model="period" size="small" class="period-group">
-            <el-radio-button v-for="item in periodOptions" :key="item.value" :value="item.value">
-              {{ item.label }}
-            </el-radio-button>
-          </el-radio-group>
-          <el-date-picker
-            v-model="selectedDate"
-            :type="datePickerType"
-            :placeholder="datePickerPlaceholder"
-            size="small"
-            class="date-picker"
-            :clearable="false"
-          />
-        </div>
+    <div class="ranking-toolbar">
+      <p class="toolbar-label">排行榜筛选</p>
+      <div class="ranking-filters">
+        <el-radio-group v-model="period" size="small" class="period-group">
+          <el-radio-button v-for="item in periodOptions" :key="item.value" :value="item.value">
+            {{ item.label }}
+          </el-radio-button>
+        </el-radio-group>
+        <el-date-picker
+          v-model="selectedDate"
+          :type="datePickerType"
+          :placeholder="datePickerPlaceholder"
+          size="small"
+          class="date-picker"
+          :clearable="false"
+        />
       </div>
-
-      <el-table v-loading="rankingLoading" :data="ranking" class="ranking-table" empty-text="该时段暂无销售数据">
-        <el-table-column label="排名" width="80" align="center">
-          <template #default="{ row }">
-            <span class="rank-badge" :class="rankClass(row.rank)">{{ row.rank }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="商品" min-width="280">
-          <template #default="{ row }">
-            <div class="product-cell">
-              <img
-                v-if="row.mainImage"
-                :src="row.mainImage"
-                :alt="row.title.zh"
-                class="product-thumb"
-              />
-              <div v-else class="product-thumb placeholder">{{ row.title.zh?.[0] || '?' }}</div>
-              <div class="product-meta">
-                <strong>{{ row.title.zh }}</strong>
-                <span>{{ row.spuCode }}</span>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="销量" width="120" align="center">
-          <template #default="{ row }">
-            <span class="metric-value">{{ row.quantitySold }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="销售额" width="140" align="right">
-          <template #default="{ row }">
-            <span class="metric-revenue">${{ row.revenue.toFixed(2) }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
     </div>
+
+    <el-row :gutter="20" class="ranking-row">
+      <el-col :xs="24" :lg="12">
+        <DashboardRankingCard
+          title="热销商品排行榜"
+          section-tag="SALES RANKING"
+          metric="quantity"
+          :period="period"
+          :selected-date="selectedDate"
+          :range-suffix="`${rangeSuffix}销量`"
+        />
+      </el-col>
+      <el-col :xs="24" :lg="12">
+        <DashboardRankingCard
+          title="商品销售额排行榜"
+          section-tag="REVENUE RANKING"
+          metric="revenue"
+          :period="period"
+          :selected-date="selectedDate"
+          :range-suffix="`${rangeSuffix}销售额`"
+        />
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <style scoped>
 .dashboard {
-  max-width: 1100px;
+  max-width: 1200px;
 }
 
 .page-header {
@@ -343,44 +285,25 @@ onMounted(async () => {
   position: relative;
 }
 
-.ranking-card {
+.ranking-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px 20px;
   border: 1px solid var(--cb-border);
   border-radius: var(--cb-radius);
   background: var(--cb-surface);
-  backdrop-filter: blur(12px);
-  padding: 24px;
-}
-
-.ranking-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 20px;
   flex-wrap: wrap;
 }
 
-.section-tag {
+.toolbar-label {
+  margin: 0;
   font-family: var(--cb-font-mono);
   font-size: 11px;
-  letter-spacing: 0.15em;
-  color: var(--cb-accent);
-  opacity: 0.7;
-  margin-bottom: 8px;
-}
-
-.section-title {
-  font-family: var(--cb-font-display);
-  font-size: 20px;
-  letter-spacing: 0.04em;
-  margin: 0 0 6px;
-  color: var(--cb-text);
-}
-
-.section-sub {
-  margin: 0;
-  font-size: 13px;
-  color: var(--cb-text-dim);
+  letter-spacing: 0.12em;
+  color: var(--cb-text-muted);
 }
 
 .ranking-filters {
@@ -398,93 +321,7 @@ onMounted(async () => {
   width: 160px;
 }
 
-.ranking-table {
-  width: 100%;
-}
-
-.rank-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  font-weight: 700;
-  font-size: 13px;
-  background: rgba(201, 169, 98, 0.12);
-  color: var(--cb-accent);
-  border: 1px solid var(--cb-border);
-}
-
-.rank-badge.rank-gold {
-  background: rgba(201, 169, 98, 0.25);
-  color: #f5d78e;
-  box-shadow: 0 0 12px rgba(201, 169, 98, 0.35);
-}
-
-.rank-badge.rank-silver {
-  background: rgba(192, 192, 192, 0.18);
-  color: #d1d5db;
-}
-
-.rank-badge.rank-bronze {
-  background: rgba(180, 120, 80, 0.18);
-  color: #d4a574;
-}
-
-.product-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.product-thumb {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  object-fit: cover;
-  border: 1px solid var(--cb-border);
-  flex-shrink: 0;
-}
-
-.product-thumb.placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(201, 169, 98, 0.12);
-  color: var(--cb-accent);
-  font-weight: 700;
-}
-
-.product-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.product-meta strong {
-  color: var(--cb-text);
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.product-meta span {
-  font-family: var(--cb-font-mono);
-  font-size: 11px;
-  color: var(--cb-text-muted);
-}
-
-.metric-value {
-  font-weight: 700;
-  color: var(--cb-text);
-}
-
-.metric-revenue {
-  font-family: var(--cb-font-mono);
-  color: var(--cb-accent);
-  font-weight: 600;
+.ranking-row :deep(.el-col) {
+  margin-bottom: 20px;
 }
 </style>

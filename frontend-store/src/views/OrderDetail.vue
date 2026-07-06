@@ -62,7 +62,7 @@ onMounted(loadData)
 <template>
   <div v-loading="loading" class="order-detail">
     <div class="page-header">
-      <el-button link @click="router.push('/user')">← 返回订单列表</el-button>
+      <el-button link @click="router.push('/orders')">← 返回订单列表</el-button>
       <h2 class="page-title">订单详情 #{{ order?.id }}</h2>
     </div>
 

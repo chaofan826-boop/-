@@ -1,11 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { OrderItem } from '../order/entities/order-item.entity';
 import { Order, OrderStatus } from '../order/entities/order.entity';
-import { LocalizedTitle } from '../product/entities/product.entity';
+import { Product } from '../product/entities/product.entity';
 import { User, UserRole } from '../user/entities/user.entity';
-import { HotProductsPeriod, HotProductsQueryDto } from './dto/hot-products-query.dto';
+import { HotProductsPeriod, HotProductsQueryDto, HotProductsSortBy } from './dto/hot-products-query.dto';
 
 type DateRange = { start: Date; end: Date; label: string };
 
@@ -18,6 +18,8 @@ export class DashboardService {
     private readonly orderRepository: Repository<Order>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
   ) {}
 
   async getOverview() {
@@ -60,7 +62,9 @@ export class DashboardService {
 
   async getHotProducts(query: HotProductsQueryDto) {
     const period = query.period ?? HotProductsPeriod.DAY;
+    const sortBy = query.sortBy ?? HotProductsSortBy.QUANTITY;
     const range = this.resolveDateRange(period, query.date);
+    const orderField = sortBy === HotProductsSortBy.REVENUE ? 'revenue' : 'quantitySold';
 
     const rows = await this.orderItemRepository
       .createQueryBuilder('item')
@@ -68,9 +72,6 @@ export class DashboardService {
       .innerJoin('order.user', 'user')
       .innerJoin('item.product', 'product')
       .select('item.product_id', 'productId')
-      .addSelect('product.spu_code', 'spuCode')
-      .addSelect('product.title', 'title')
-      .addSelect('product.main_image', 'mainImage')
       .addSelect('SUM(item.quantity)', 'quantitySold')
       .addSelect('SUM(item.quantity * item.price)', 'revenue')
       .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
@@ -78,36 +79,47 @@ export class DashboardService {
       .andWhere('order.created_at >= :start', { start: range.start })
       .andWhere('order.created_at < :end', { end: range.end })
       .groupBy('item.product_id')
-      .addGroupBy('product.id')
-      .addGroupBy('product.spu_code')
-      .addGroupBy('product.title')
-      .addGroupBy('product.main_image')
-      .orderBy('quantitySold', 'DESC')
+      .orderBy(orderField, 'DESC')
       .limit(10)
       .getRawMany<{
         productId: string;
-        spuCode: string;
-        title: string | LocalizedTitle;
-        mainImage: string | null;
         quantitySold: string;
         revenue: string;
       }>();
 
+    const productIds = rows.map((row) => Number(row.productId)).filter((id) => Number.isFinite(id));
+    const products =
+      productIds.length > 0
+        ? await this.productRepository.find({ where: { id: In(productIds) } })
+        : [];
+    const productMap = new Map(products.map((product) => [product.id, product]));
+
     return {
       period,
+      sortBy,
       date: range.label,
       startDate: range.start.toISOString(),
       endDate: range.end.toISOString(),
-      list: rows.map((row, index) => ({
-        rank: index + 1,
-        productId: Number(row.productId),
-        spuCode: row.spuCode,
-        title: this.parseTitle(row.title),
-        mainImage: row.mainImage,
-        quantitySold: Number(row.quantitySold),
-        revenue: Number(Number(row.revenue).toFixed(2)),
-      })),
+      list: rows.map((row, index) => {
+        const product = productMap.get(Number(row.productId));
+        return {
+          rank: index + 1,
+          productId: Number(row.productId),
+          spuCode: product?.spuCode ?? '',
+          title: product?.title ?? { zh: '未知商品', en: 'Unknown product' },
+          mainImage: this.resolveProductImage(product),
+          quantitySold: Number(row.quantitySold),
+          revenue: Number(Number(row.revenue).toFixed(2)),
+        };
+      }),
     };
+  }
+
+  private resolveProductImage(product?: Product | null): string | null {
+    if (!product) return null;
+    if (product.mainImage) return product.mainImage;
+    if (product.images?.length) return product.images[0] ?? null;
+    return null;
   }
 
   private resolveDateRange(period: HotProductsPeriod, date?: string): DateRange {
@@ -137,17 +149,6 @@ export class DashboardService {
     const start = new Date(year, 0, 1);
     const end = new Date(year + 1, 0, 1);
     return { start, end, label };
-  }
-
-  private parseTitle(value: string | LocalizedTitle): LocalizedTitle {
-    if (typeof value === 'string') {
-      try {
-        return JSON.parse(value) as LocalizedTitle;
-      } catch {
-        return { zh: value, en: value };
-      }
-    }
-    return value;
   }
 
   private formatDay(date: Date) {

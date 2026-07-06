@@ -19,6 +19,10 @@ async function handleLogin() {
     ElMessage.warning('请填写账号和密码')
     return
   }
+  if (form.password.length < 6) {
+    ElMessage.warning('密码至少 6 位，且须同时包含字母和数字')
+    return
+  }
   loading.value = true
   try {
     await userStore.login(form.account, form.password)
@@ -41,10 +45,11 @@ async function handleLogin() {
       </div>
       <el-form @submit.prevent="handleLogin">
         <el-form-item>
-          <el-input v-model="form.account" placeholder="邮箱 / 手机号" size="large" />
+          <el-input v-model="form.account" placeholder="手机号 / 邮箱" size="large" inputmode="tel" />
         </el-form-item>
         <el-form-item>
           <el-input v-model="form.password" type="password" placeholder="密码" size="large" show-password />
+          <p class="field-hint">密码至少 6 位，须同时包含字母和数字</p>
         </el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading" size="large" class="submit-btn">
           登 录
@@ -136,5 +141,12 @@ async function handleLogin() {
   color: var(--cb-accent);
   text-decoration: none;
   font-weight: 500;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--cb-text-muted);
+  line-height: 1.5;
 }
 </style>

@@ -2,6 +2,8 @@ import type { LocalizedTitle } from '@/types/product'
 
 export type HotProductsPeriod = 'day' | 'month' | 'year'
 
+export type HotProductsSortBy = 'quantity' | 'revenue'
+
 export interface HotProductRankItem {
   rank: number
   productId: number
@@ -14,6 +16,7 @@ export interface HotProductRankItem {
 
 export interface HotProductsResult {
   period: HotProductsPeriod
+  sortBy?: HotProductsSortBy
   date: string
   startDate: string
   endDate: string
@@ -22,6 +25,7 @@ export interface HotProductsResult {
 
 export interface HotProductsQuery {
   period: HotProductsPeriod
+  sortBy?: HotProductsSortBy
   date?: string
 }
 

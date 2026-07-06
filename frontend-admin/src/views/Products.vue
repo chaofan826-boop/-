@@ -210,6 +210,14 @@ function handleSearch() {
   loadProducts()
 }
 
+function resetFilters() {
+  query.page = 1
+  query.keyword = ''
+  query.status = ''
+  query.categoryId = undefined
+  loadProducts()
+}
+
 function openCreate() {
   resetForm()
   dialogTitle.value = '新增商品'
@@ -379,6 +387,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
+          <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>

@@ -42,7 +42,7 @@ async function handleSubmit() {
     })
     cartStore.clear()
     ElMessage.success('下单成功！')
-    router.push('/user')
+    router.push('/orders')
   } finally {
     loading.value = false
   }

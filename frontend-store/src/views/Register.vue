@@ -1,27 +1,77 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { REGIONS, getRegion } from '@/constants/regions'
+
+type RegisterMode = 'phone' | 'email'
+
+const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/
 
 const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
+const mode = ref<RegisterMode>('phone')
 
 const form = reactive({
   name: '',
   email: '',
+  region: 'CN',
+  phone: '',
   password: '',
 })
 
+const selectedRegion = computed(() => getRegion(form.region))
+
 async function handleRegister() {
-  if (!form.name || !form.email || !form.password) {
+  if (!form.name || !form.password) {
     ElMessage.warning('请填写完整信息')
     return
   }
+  if (!PASSWORD_PATTERN.test(form.password)) {
+    ElMessage.warning('密码至少 6 位，须同时包含字母和数字')
+    return
+  }
+
+  if (mode.value === 'email') {
+    if (!form.email.trim()) {
+      ElMessage.warning('请填写邮箱')
+      return
+    }
+    loading.value = true
+    try {
+      await userStore.register({
+        name: form.name,
+        email: form.email.trim(),
+        password: form.password,
+      })
+      ElMessage.success('注册成功')
+      router.push('/')
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+
+  if (!form.region || !form.phone) {
+    ElMessage.warning('请选择地区并填写手机号')
+    return
+  }
+  const region = selectedRegion.value
+  if (region && !region.pattern.test(form.phone.replace(/\D/g, ''))) {
+    ElMessage.warning('手机号格式不正确')
+    return
+  }
+
   loading.value = true
   try {
-    await userStore.register({ name: form.name, email: form.email, password: form.password })
+    await userStore.register({
+      name: form.name,
+      region: form.region,
+      phone: form.phone.replace(/\D/g, ''),
+      password: form.password,
+    })
     ElMessage.success('注册成功')
     router.push('/')
   } finally {
@@ -39,15 +89,54 @@ async function handleRegister() {
         <p class="auth-badge">CREATE ACCOUNT</p>
         <h2>注册</h2>
       </div>
+
+      <div class="mode-switch">
+        <button type="button" :class="{ active: mode === 'phone' }" @click="mode = 'phone'">
+          手机号注册
+        </button>
+        <button type="button" :class="{ active: mode === 'email' }" @click="mode = 'email'">
+          邮箱注册
+        </button>
+      </div>
+
       <el-form @submit.prevent="handleRegister">
         <el-form-item>
           <el-input v-model="form.name" placeholder="昵称" size="large" />
         </el-form-item>
-        <el-form-item>
-          <el-input v-model="form.email" placeholder="邮箱" size="large" />
+
+        <template v-if="mode === 'phone'">
+          <el-form-item>
+            <el-select v-model="form.region" placeholder="选择地区" size="large" style="width: 100%">
+              <el-option
+                v-for="r in REGIONS"
+                :key="r.code"
+                :label="`${r.label} (+${r.dial})`"
+                :value="r.code"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-input v-model="form.phone" placeholder="手机号" size="large" inputmode="tel">
+              <template #prefix>
+                <span class="dial-prefix">+{{ selectedRegion?.dial }}</span>
+              </template>
+            </el-input>
+          </el-form-item>
+        </template>
+
+        <el-form-item v-else>
+          <el-input v-model="form.email" placeholder="邮箱" size="large" inputmode="email" />
         </el-form-item>
+
         <el-form-item>
-          <el-input v-model="form.password" type="password" placeholder="密码（至少6位）" size="large" show-password />
+          <el-input
+            v-model="form.password"
+            type="password"
+            placeholder="请输入密码"
+            size="large"
+            show-password
+          />
+          <p class="field-hint">密码至少 6 位，须同时包含字母和数字</p>
         </el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading" size="large" class="submit-btn">
           注 册
@@ -89,7 +178,35 @@ async function handleRegister() {
 
 .auth-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
+}
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 4px;
+  border-radius: var(--cb-radius);
+  background: rgba(14, 14, 16, 0.6);
+  border: 1px solid var(--cb-border);
+}
+
+.mode-switch button {
+  border: none;
+  background: transparent;
+  color: var(--cb-text-muted);
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: calc(var(--cb-radius) - 2px);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-switch button.active {
+  background: rgba(201, 169, 98, 0.12);
+  color: var(--cb-accent);
+  box-shadow: inset 0 0 0 1px rgba(201, 169, 98, 0.25);
 }
 
 .logo-mark {
@@ -121,6 +238,19 @@ async function handleRegister() {
   font-size: 28px;
   letter-spacing: 0.08em;
   color: var(--cb-text);
+}
+
+.dial-prefix {
+  color: var(--cb-text-muted);
+  font-size: 14px;
+  padding-right: 4px;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--cb-text-muted);
+  line-height: 1.5;
 }
 
 .submit-btn {

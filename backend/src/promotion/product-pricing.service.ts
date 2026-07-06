@@ -15,6 +15,8 @@ export interface ProductPricingResult {
   productSkuId: number;
   originalPrice: number;
   salePrice: number;
+  promotionType: PromotionType | null;
+  promotionTitle: { zh: string; en: string } | null;
 }
 
 @Injectable()
@@ -42,13 +44,20 @@ export class ProductPricingService {
 
       const originalPrice = this.getSkuPrice(sku, currency);
       const promotions = promotionsByProduct.get(item.productId) ?? [];
-      const salePrice = this.resolveBestSalePrice(item.productId, currency, originalPrice, promotions);
+      const { salePrice, promotion } = this.resolveBestSalePrice(
+        item.productId,
+        currency,
+        originalPrice,
+        promotions,
+      );
 
       return {
         productId: item.productId,
         productSkuId: item.productSkuId,
         originalPrice,
         salePrice,
+        promotionType: promotion?.type ?? null,
+        promotionTitle: promotion?.title ?? null,
       };
     });
   }
@@ -57,8 +66,13 @@ export class ProductPricingService {
     const originalPrice = this.getSkuPrice(sku, currency);
     const promotionsByProduct = await this.loadActivePromotionsByProduct([productId]);
     const promotions = promotionsByProduct.get(productId) ?? [];
-    const salePrice = this.resolveBestSalePrice(productId, currency, originalPrice, promotions);
-    return { originalPrice, salePrice };
+    const { salePrice, promotion } = this.resolveBestSalePrice(productId, currency, originalPrice, promotions);
+    return {
+      originalPrice,
+      salePrice,
+      promotionType: promotion?.type ?? null,
+      promotionTitle: promotion?.title ?? null,
+    };
   }
 
   private async loadActivePromotionsByProduct(productIds: number[]) {
@@ -99,17 +113,21 @@ export class ProductPricingService {
     currency: string,
     originalPrice: number,
     promotions: Promotion[],
-  ) {
-    if (!promotions.length) return originalPrice;
+  ): { salePrice: number; promotion: Promotion | null } {
+    if (!promotions.length) {
+      return { salePrice: originalPrice, promotion: null };
+    }
 
     let best = originalPrice;
+    let bestPromotion: Promotion | null = null;
     for (const promotion of promotions) {
       const salePrice = resolveSalePrice(productId, currency, originalPrice, promotion);
       if (salePrice < best) {
         best = salePrice;
+        bestPromotion = promotion;
       }
     }
-    return best;
+    return { salePrice: best, promotion: bestPromotion };
   }
 
   private getSkuPrice(sku: ProductSku, currency: string) {

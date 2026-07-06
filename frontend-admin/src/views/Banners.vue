@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import type { UploadRequestOptions } from 'element-plus'
-import { createBanner, deleteBanner, getBanners, updateBanner } from '@/api/banner'
+import { createBanner, deleteBanner, getBannerSettings, getBanners, updateBanner, updateBannerSettings, updateBannerStatus } from '@/api/banner'
 import { uploadBannerImage } from '@/api/upload'
 import { useUserStore } from '@/stores/user'
 import type { Banner, BannerStatus } from '@/types/banner'
@@ -19,6 +19,9 @@ const dialogTitle = ref('新增轮播图')
 const editingId = ref<number | null>(null)
 const submitLoading = ref(false)
 const imageUploading = ref(false)
+const statusLoadingId = ref<number | null>(null)
+const settingsLoading = ref(false)
+const carouselEnabled = ref(true)
 
 const filterStatus = ref<BannerStatus | ''>('')
 
@@ -29,6 +32,13 @@ const form = reactive({
   linkUrl: '',
   sortOrder: 0,
   status: 'active' as BannerStatus,
+})
+
+const formVisible = computed({
+  get: () => form.status === 'active',
+  set: (visible: boolean) => {
+    form.status = visible ? 'active' : 'inactive'
+  },
 })
 
 function resetForm() {
@@ -67,6 +77,11 @@ async function handleImageUpload(options: UploadRequestOptions) {
   }
 }
 
+async function loadSettings() {
+  const settings = await getBannerSettings()
+  carouselEnabled.value = settings.carouselEnabled
+}
+
 async function loadBanners() {
   loading.value = true
   try {
@@ -75,6 +90,17 @@ async function loadBanners() {
     })
   } finally {
     loading.value = false
+  }
+}
+
+async function handleCarouselToggle(enabled: boolean) {
+  settingsLoading.value = true
+  try {
+    const settings = await updateBannerSettings(enabled)
+    carouselEnabled.value = settings.carouselEnabled
+    ElMessage.success(enabled ? '用户端轮播图已开启' : '用户端轮播图已关闭')
+  } finally {
+    settingsLoading.value = false
   }
 }
 
@@ -153,15 +179,27 @@ async function handleDelete(row: Banner) {
   await loadBanners()
 }
 
-function statusTagType(status: BannerStatus) {
-  return status === 'active' ? 'success' : 'info'
+async function handleStatusToggle(row: Banner, visible: boolean) {
+  const nextStatus: BannerStatus = visible ? 'active' : 'inactive'
+  if (row.status === nextStatus) return
+
+  statusLoadingId.value = row.id
+  try {
+    await updateBannerStatus(row.id, nextStatus)
+    row.status = nextStatus
+    ElMessage.success(visible ? '已设为显示' : '已设为隐藏')
+  } finally {
+    statusLoadingId.value = null
+  }
 }
 
-function statusLabel(status: BannerStatus) {
-  return status === 'active' ? '启用' : '停用'
+function rowClassName({ row }: { row: Banner }) {
+  return row.status === 'inactive' ? 'row-inactive' : ''
 }
 
-onMounted(loadBanners)
+onMounted(async () => {
+  await Promise.all([loadSettings(), loadBanners()])
+})
 </script>
 
 <template>
@@ -174,9 +212,28 @@ onMounted(loadBanners)
       <el-button type="primary" :icon="Plus" @click="openCreate">新增轮播图</el-button>
     </div>
 
+    <el-card shadow="never" class="master-switch-card">
+      <div class="master-switch-row">
+        <div>
+          <h3 class="master-switch-title">用户端轮播总开关</h3>
+          <p class="master-switch-desc">
+            关闭后，用户端首页将隐藏整个轮播区域（单张轮播图的显示开关不受影响）。
+          </p>
+        </div>
+        <el-switch
+          :model-value="carouselEnabled"
+          :loading="settingsLoading"
+          inline-prompt
+          active-text="开启"
+          inactive-text="关闭"
+          @change="handleCarouselToggle"
+        />
+      </div>
+    </el-card>
+
     <el-card shadow="never" class="filter-card">
       <el-form :inline="true">
-        <el-form-item label="状态">
+        <el-form-item label="显示状态">
           <el-select
             v-model="filterStatus"
             placeholder="全部"
@@ -184,15 +241,15 @@ onMounted(loadBanners)
             style="width: 120px"
             @change="loadBanners"
           >
-            <el-option label="启用" value="active" />
-            <el-option label="停用" value="inactive" />
+            <el-option label="显示中" value="active" />
+            <el-option label="已隐藏" value="inactive" />
           </el-select>
         </el-form-item>
       </el-form>
     </el-card>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="banners" stripe>
+      <el-table v-loading="loading" :data="banners" :row-class-name="rowClassName" stripe>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="图片" width="160">
           <template #default="{ row }">
@@ -214,9 +271,16 @@ onMounted(loadBanners)
           </template>
         </el-table-column>
         <el-table-column prop="sortOrder" label="排序" width="80" />
-        <el-table-column label="状态" width="100">
+        <el-table-column label="显示" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            <el-switch
+              :model-value="row.status === 'active'"
+              :loading="statusLoadingId === row.id"
+              inline-prompt
+              active-text="显"
+              inactive-text="隐"
+              @change="(val: boolean) => handleStatusToggle(row, val)"
+            />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
@@ -264,11 +328,13 @@ onMounted(loadBanners)
         <el-form-item label="排序">
           <el-input-number v-model="form.sortOrder" :min="0" style="width: 160px" />
         </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="form.status" style="width: 160px">
-            <el-option label="启用" value="active" />
-            <el-option label="停用" value="inactive" />
-          </el-select>
+        <el-form-item label="是否显示">
+          <el-switch
+            v-model="formVisible"
+            inline-prompt
+            active-text="显示"
+            inactive-text="隐藏"
+          />
         </el-form-item>
       </el-form>
 
@@ -307,6 +373,37 @@ onMounted(loadBanners)
 
 .filter-card {
   margin-bottom: 16px;
+}
+
+.master-switch-card {
+  margin-bottom: 16px;
+}
+
+.master-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.master-switch-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cb-text);
+}
+
+.master-switch-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cb-text-muted);
+  max-width: 560px;
+  line-height: 1.5;
+}
+
+:deep(.row-inactive) {
+  opacity: 0.55;
 }
 
 .sub-text {

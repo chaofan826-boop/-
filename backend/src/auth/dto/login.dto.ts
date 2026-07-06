@@ -5,6 +5,6 @@ export class LoginDto {
   account: string;
 
   @IsString()
-  @MinLength(6, { message: 'Password must be at least 6 characters' })
+  @MinLength(6, { message: '密码至少 6 位，且须同时包含字母和数字' })
   password: string;
 }

@@ -67,9 +67,58 @@ const canCreateInActiveTab = computed(() =>
   activeTab.value === 'featured' ? canCreateFeatured.value : true,
 )
 
+const exclusiveConflictType = computed(() => {
+  if (form.type === 'flash_sale') return 'discount' as PromotionType
+  if (form.type === 'discount') return 'flash_sale' as PromotionType
+  return null
+})
+
+const conflictingProductMap = computed(() => {
+  const map = new Map<number, Promotion>()
+  const oppositeType = exclusiveConflictType.value
+  if (!oppositeType) return map
+
+  for (const promotion of promotions.value) {
+    if (promotion.type !== oppositeType) continue
+    if (promotion.id === editingId.value) continue
+    for (const productId of promotion.productIds) {
+      map.set(productId, promotion)
+    }
+  }
+  return map
+})
+
+const exclusiveHint = computed(() => {
+  if (form.type === 'flash_sale') {
+    return '限时秒杀与新人专享不能包含相同商品。已参与新人专享的商品无法再次加入。'
+  }
+  if (form.type === 'discount') {
+    return '新人专享与限时秒杀不能包含相同商品。已参与限时秒杀的商品无法再次加入。'
+  }
+  return ''
+})
+
 const selectedProducts = computed(() =>
   productOptions.value.filter((p) => form.productIds.includes(p.id)),
 )
+
+function getProductConflict(productId: number) {
+  return conflictingProductMap.value.get(productId)
+}
+
+function warnProductConflict(productId: number) {
+  const conflict = getProductConflict(productId)
+  if (!conflict) return false
+
+  const existingLabel = conflict.type === 'flash_sale' ? '限时秒杀' : '新人专享'
+  const targetLabel = form.type === 'flash_sale' ? '限时秒杀' : '新人专享'
+  const product = productOptions.value.find((item) => item.id === productId)
+  const productName = product?.title.zh ?? `商品#${productId}`
+  ElMessage.warning(
+    `「${productName}」已参与${existingLabel}「${conflict.title.zh}」，不能同时设置为${targetLabel}`,
+  )
+  return true
+}
 
 function defaultDateRange() {
   const start = new Date()
@@ -109,7 +158,17 @@ function ensureSalePriceRow(productId: number) {
 
 watch(
   () => [...form.productIds],
-  (ids) => {
+  (ids, prev) => {
+    if (prev?.length) {
+      const added = ids.filter((id) => !prev.includes(id))
+      const blocked = added.filter((id) => getProductConflict(id))
+      if (blocked.length) {
+        blocked.forEach((id) => warnProductConflict(id))
+        form.productIds = ids.filter((id) => !blocked.includes(id))
+        return
+      }
+    }
+
     if (form.type !== 'flash_sale') return
     for (const id of ids) ensureSalePriceRow(id)
     for (const key of Object.keys(form.salePrices)) {
@@ -306,9 +365,10 @@ function removeProduct(id: number) {
 function toggleProduct(id: number) {
   if (form.productIds.includes(id)) {
     removeProduct(id)
-  } else {
-    form.productIds.push(id)
+    return
   }
+  if (warnProductConflict(id)) return
+  form.productIds.push(id)
 }
 
 function productLabel(id: number) {
@@ -357,8 +417,26 @@ onMounted(async () => {
     <el-tabs v-model="activeTab" class="promo-tabs">
       <el-tab-pane label="臻品推荐" name="featured" />
       <el-tab-pane label="限时秒杀" name="flash_sale" />
-      <el-tab-pane label="折扣活动" name="discount" />
+      <el-tab-pane label="新人专享" name="discount" />
     </el-tabs>
+
+    <el-alert
+      v-if="activeTab === 'flash_sale'"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="featured-hint"
+      title="限时秒杀与新人专享不能包含相同商品，设置时请避免重复选择。"
+    />
+
+    <el-alert
+      v-if="activeTab === 'discount'"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="featured-hint"
+      title="新人专享与限时秒杀不能包含相同商品，设置时请避免重复选择。"
+    />
 
     <el-alert
       v-if="activeTab === 'featured'"
@@ -433,12 +511,20 @@ onMounted(async () => {
               :disabled="!canCreateFeatured && form.type !== 'featured'"
             />
             <el-option label="限时秒杀" value="flash_sale" />
-            <el-option label="折扣活动" value="discount" />
+            <el-option label="新人专享" value="discount" />
           </el-select>
         </el-form-item>
         <el-form-item label="标题" required>
           <el-input v-model="form.titleZh" placeholder="如 臻品推荐 / 新人专享" />
         </el-form-item>
+        <el-alert
+          v-if="exclusiveHint"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="exclusive-alert"
+          :title="exclusiveHint"
+        />
         <el-form-item v-if="!editingId" label="中文副标题">
           <el-input v-model="form.subtitleZh" placeholder="可选" />
         </el-form-item>
@@ -476,12 +562,16 @@ onMounted(async () => {
               :key="p.id"
               :label="`${p.title.zh} (${p.spuCode})`"
               :value="p.id"
+              :disabled="!!getProductConflict(p.id)"
             >
               <div class="product-option">
                 <img :src="productThumb(p)" class="option-thumb" alt="" loading="lazy" />
                 <div class="option-info">
                   <span class="option-title">{{ p.title.zh }}</span>
                   <span class="option-code">{{ p.spuCode }}</span>
+                  <span v-if="getProductConflict(p.id)" class="option-conflict">
+                    已参与{{ getProductConflict(p.id)?.type === 'flash_sale' ? '限时秒杀' : '新人专享' }}
+                  </span>
                 </div>
               </div>
             </el-option>
@@ -494,13 +584,23 @@ onMounted(async () => {
                 v-for="p in productOptions"
                 :key="p.id"
                 type="button"
-                :class="['product-card', { selected: form.productIds.includes(p.id) }]"
+                :class="[
+                  'product-card',
+                  {
+                    selected: form.productIds.includes(p.id),
+                    conflict: !!getProductConflict(p.id),
+                  },
+                ]"
+                :disabled="!!getProductConflict(p.id)"
                 @click="toggleProduct(p.id)"
               >
                 <img :src="productThumb(p)" :alt="p.title.zh" loading="lazy" />
                 <div class="card-info">
                   <span class="card-title">{{ p.title.zh }}</span>
                   <span class="card-code">{{ p.spuCode }}</span>
+                  <span v-if="getProductConflict(p.id)" class="card-conflict">
+                    已参与{{ getProductConflict(p.id)?.type === 'flash_sale' ? '限时秒杀' : '新人专享' }}
+                  </span>
                 </div>
                 <span v-if="form.productIds.includes(p.id)" class="card-check">✓</span>
               </button>
@@ -607,6 +707,10 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
+.exclusive-alert {
+  margin-bottom: 16px;
+}
+
 .promotions-page :deep(.row-inactive) {
   opacity: 0.55;
 }
@@ -677,6 +781,11 @@ onMounted(async () => {
   color: var(--cb-text-muted);
 }
 
+.option-conflict {
+  font-size: 11px;
+  color: #fbbf24;
+}
+
 .product-picker {
   margin-top: 12px;
   width: 100%;
@@ -718,6 +827,22 @@ onMounted(async () => {
 .product-card.selected {
   border-color: var(--cb-accent);
   box-shadow: 0 0 0 1px rgba(201, 169, 98, 0.35);
+}
+
+.product-card.conflict {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.product-card.conflict:hover {
+  border-color: var(--cb-border);
+  box-shadow: none;
+}
+
+.card-conflict {
+  font-size: 10px;
+  color: #fbbf24;
+  line-height: 1.3;
 }
 
 .product-card img {

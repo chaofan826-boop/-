@@ -1,5 +1,4 @@
-import type { Banner, BannerQuery } from '@/types/banner'
+import type { Banner } from '@/types/banner'
 import { get } from './request'
 
-export const getBanners = (params?: BannerQuery) =>
-  get<Banner[]>('/banners', { params: { status: 'active', ...params } })
+export const getBanners = () => get<Banner[]>('/banners/home')

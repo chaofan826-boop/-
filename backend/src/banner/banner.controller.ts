@@ -17,6 +17,7 @@ import { BannerService } from './banner.service';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { QueryBannerDto } from './dto/query-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
+import { UpdateBannerSettingsDto } from './dto/update-banner-settings.dto';
 
 @Controller('banners')
 export class BannerController {
@@ -26,6 +27,25 @@ export class BannerController {
   @Get()
   findAll(@Query() query: QueryBannerDto) {
     return this.bannerService.findAll(query);
+  }
+
+  @Public()
+  @Get('settings')
+  getSettings() {
+    return this.bannerService.getSettings();
+  }
+
+  @Public()
+  @Get('home')
+  findHomeBanners() {
+    return this.bannerService.findActiveForStore();
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Post('settings/update')
+  updateSettings(@Body() dto: UpdateBannerSettingsDto) {
+    return this.bannerService.updateSettings(dto);
   }
 
   @UseGuards(RolesGuard)

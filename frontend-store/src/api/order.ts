@@ -6,7 +6,7 @@ export interface OrderItem {
   productSkuId: number | null
   quantity: number
   price: number
-  product?: { title: { zh: string } }
+  product?: { title: { zh: string }; mainImage?: string | null }
   productSku?: { skuCode: string; color: string | null; size: string | null }
 }
 

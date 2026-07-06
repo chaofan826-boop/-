@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsOptional, IsString, Matches, MinLength, ValidateIf } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, MinLength, ValidateIf } from 'class-validator';
 import { UserRole } from '../entities/user.entity';
 
 export class CreateUserDto {
@@ -8,8 +8,11 @@ export class CreateUserDto {
 
   @ValidateIf((o: CreateUserDto) => !o.email)
   @IsString()
-  @Matches(/^1[3-9]\d{9}$/)
   phone?: string;
+
+  @ValidateIf((o: CreateUserDto) => !!o.phone)
+  @IsString()
+  region?: string;
 
   @IsString()
   @MinLength(6)

@@ -6,10 +6,19 @@ export enum HotProductsPeriod {
   YEAR = 'year',
 }
 
+export enum HotProductsSortBy {
+  QUANTITY = 'quantity',
+  REVENUE = 'revenue',
+}
+
 export class HotProductsQueryDto {
   @IsOptional()
   @IsEnum(HotProductsPeriod)
   period?: HotProductsPeriod;
+
+  @IsOptional()
+  @IsEnum(HotProductsSortBy)
+  sortBy?: HotProductsSortBy;
 
   @IsOptional()
   @IsString()

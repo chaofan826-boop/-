@@ -31,3 +31,7 @@ export interface CreateBannerPayload {
 export interface UpdateBannerPayload extends CreateBannerPayload {
   id: number
 }
+
+export interface BannerSettings {
+  carouselEnabled: boolean
+}

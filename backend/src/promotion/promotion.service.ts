@@ -24,6 +24,7 @@ export class PromotionService {
   async create(dto: CreatePromotionDto) {
     this.validateByType(dto.type, dto);
     await this.ensureSingleFeatured(dto.type);
+    await this.ensureNoExclusiveProductOverlap(dto.type, dto.productIds);
     return this.savePromotion(dto);
   }
 
@@ -66,6 +67,9 @@ export class PromotionService {
     if (dto.type !== undefined && dto.type !== promotion.type) {
       await this.ensureSingleFeatured(dto.type, promotion.id);
     }
+
+    const nextProductIds = dto.productIds ?? promotion.productIds;
+    await this.ensureNoExclusiveProductOverlap(type, nextProductIds, promotion.id);
 
     if (dto.type !== undefined) promotion.type = dto.type;
     if (dto.title !== undefined) promotion.title = dto.title;
@@ -168,8 +172,71 @@ export class PromotionService {
       where: { id: In(productIds), status: ProductStatus.ACTIVE },
     });
     if (products.length !== productIds.length) {
-      throw new BadRequestException('Some selected products are invalid or inactive');
+      throw new BadRequestException('部分所选商品不存在或未上架');
     }
+  }
+
+  private getExclusiveConflictType(type: PromotionType): PromotionType | null {
+    if (type === PromotionType.FLASH_SALE) return PromotionType.DISCOUNT;
+    if (type === PromotionType.DISCOUNT) return PromotionType.FLASH_SALE;
+    return null;
+  }
+
+  private getPromotionTypeLabel(type: PromotionType): string {
+    const labels: Record<PromotionType, string> = {
+      [PromotionType.FLASH_SALE]: '限时秒杀',
+      [PromotionType.DISCOUNT]: '新人专享',
+      [PromotionType.FEATURED]: '臻品推荐',
+    };
+    return labels[type];
+  }
+
+  private async ensureNoExclusiveProductOverlap(
+    type: PromotionType,
+    productIds: number[],
+    excludePromotionId?: number,
+  ) {
+    const conflictType = this.getExclusiveConflictType(type);
+    if (!conflictType) return;
+
+    const qb = this.promotionRepository
+      .createQueryBuilder('promotion')
+      .where('promotion.deleted_at IS NULL')
+      .andWhere('promotion.type = :type', { type: conflictType });
+
+    if (excludePromotionId) {
+      qb.andWhere('promotion.id != :excludeId', { excludeId: excludePromotionId });
+    }
+
+    const existingPromotions = await qb.getMany();
+    if (!existingPromotions.length) return;
+
+    const conflictByProductId = new Map<number, Promotion>();
+    for (const promotion of existingPromotions) {
+      for (const productId of productIds) {
+        if (promotion.productIds.includes(productId)) {
+          conflictByProductId.set(productId, promotion);
+        }
+      }
+    }
+
+    if (!conflictByProductId.size) return;
+
+    const conflictProductIds = [...conflictByProductId.keys()];
+    const products = await this.productRepository.find({ where: { id: In(conflictProductIds) } });
+    const productNameMap = new Map(products.map((product) => [product.id, product.title.zh]));
+
+    const targetLabel = this.getPromotionTypeLabel(type);
+    const existingLabel = this.getPromotionTypeLabel(conflictType);
+    const details = conflictProductIds.map((productId) => {
+      const promotion = conflictByProductId.get(productId)!;
+      const productName = productNameMap.get(productId) ?? `商品#${productId}`;
+      return `「${productName}」已参与${existingLabel}「${promotion.title.zh}」`;
+    });
+
+    throw new BadRequestException(
+      `以下商品不能同时设置为${targetLabel}：${details.join('；')}`,
+    );
   }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { formatSpec, formatSalesCount, getProduct, getSkuPrice } from '@/api/product'
@@ -32,6 +32,18 @@ const sizes = computed(() => {
 const selectedColor = ref<string>('')
 const selectedSize = ref<string>('')
 
+const pricing = ref<{
+  originalPrice: number
+  salePrice: number
+  promotionType?: 'flash_sale' | 'discount' | null
+  promotionTitle?: { zh: string; en: string } | null
+} | null>(null)
+
+const promoTypeFallback: Record<string, { zh: string; en: string }> = {
+  flash_sale: { zh: '限时秒杀', en: 'Flash Sale' },
+  discount: { zh: '专享优惠', en: 'Special Offer' },
+}
+
 const images = computed(() => {
   if (!product.value) return []
   const list = [product.value.mainImage, ...(product.value.images || [])].filter(Boolean) as string[]
@@ -57,6 +69,53 @@ const currentPrice = computed(() => {
   if (!selectedSku.value) return 0
   return getSkuPrice(selectedSku.value, appStore.currency)
 })
+
+const displaySalePrice = computed(() => pricing.value?.salePrice ?? currentPrice.value)
+const displayOriginalPrice = computed(() => pricing.value?.originalPrice ?? currentPrice.value)
+const hasPromotion = computed(() => displaySalePrice.value < displayOriginalPrice.value)
+
+const promotionLabel = computed(() => {
+  if (!hasPromotion.value || !pricing.value) return ''
+  const title = pricing.value.promotionTitle
+  if (title?.zh || title?.en) {
+    return appStore.locale === 'zh' ? title.zh || title.en : title.en || title.zh
+  }
+  const type = pricing.value.promotionType
+  if (type && promoTypeFallback[type]) {
+    return appStore.locale === 'zh' ? promoTypeFallback[type].zh : promoTypeFallback[type].en
+  }
+  return appStore.locale === 'zh' ? '促销' : 'Promo'
+})
+
+const promotionTagClass = computed(() => {
+  if (pricing.value?.promotionType === 'flash_sale') return 'flash'
+  return 'discount'
+})
+
+async function refreshPricing() {
+  if (!product.value || !selectedSku.value) {
+    pricing.value = null
+    return
+  }
+  try {
+    const [row] = await quoteProductPricing(
+      [{ productId: product.value.id, productSkuId: selectedSku.value.id }],
+      appStore.currency,
+    )
+    if (row) {
+      pricing.value = {
+        originalPrice: row.originalPrice,
+        salePrice: row.salePrice,
+        promotionType: row.promotionType,
+        promotionTitle: row.promotionTitle,
+      }
+    } else {
+      pricing.value = null
+    }
+  } catch {
+    pricing.value = null
+  }
+}
 
 function pickSkuBySpec() {
   const sku = product.value?.skus.find(
@@ -87,12 +146,12 @@ async function addToCart() {
     return
   }
 
-  const [pricing] = await quoteProductPricing(
-    [{ productId: product.value.id, productSkuId: selectedSku.value.id }],
-    appStore.currency,
-  )
-  const originalPrice = pricing?.originalPrice ?? getSkuPrice(selectedSku.value, appStore.currency)
-  const salePrice = pricing?.salePrice ?? originalPrice
+  if (!pricing.value) {
+    await refreshPricing()
+  }
+
+  const originalPrice = pricing.value?.originalPrice ?? getSkuPrice(selectedSku.value, appStore.currency)
+  const salePrice = pricing.value?.salePrice ?? originalPrice
 
   cartStore.addItem({
     productId: product.value.id,
@@ -125,10 +184,22 @@ onMounted(async () => {
       selectedColor.value = first.color || ''
       selectedSize.value = first.size || ''
     }
+    await refreshPricing()
   } finally {
     loading.value = false
   }
 })
+
+watch(selectedSku, () => {
+  refreshPricing()
+})
+
+watch(
+  () => appStore.currency,
+  () => {
+    refreshPricing()
+  },
+)
 </script>
 
 <template>
@@ -156,7 +227,15 @@ onMounted(async () => {
           <div class="info-panel">
             <h1>{{ appStore.locale === 'zh' ? product.title.zh : product.title.en }}</h1>
             <p class="sales-line">{{ formatSalesCount(product.salesCount ?? 0, appStore.locale) }}</p>
-            <p class="price">{{ appStore.formatPrice(currentPrice) }}</p>
+            <div class="price-block">
+              <div class="price-main">
+                <p class="price" :class="{ promo: hasPromotion }">{{ appStore.formatPrice(displaySalePrice) }}</p>
+                <p v-if="hasPromotion" class="orig-price">{{ appStore.formatPrice(displayOriginalPrice) }}</p>
+              </div>
+              <span v-if="hasPromotion && promotionLabel" class="promo-tag" :class="promotionTagClass">
+                {{ promotionLabel }}
+              </span>
+            </div>
             <p class="desc">{{ product.description }}</p>
 
             <div v-if="colors.length" class="spec-group">
@@ -286,13 +365,61 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 
+.price-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.price-main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.promo-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.promo-tag.flash {
+  background: linear-gradient(135deg, #c0392b, #e74c3c);
+  color: #fff;
+}
+
+.promo-tag.discount {
+  border: 1px solid var(--cb-accent);
+  background: rgba(201, 169, 98, 0.12);
+  color: var(--cb-accent);
+}
+
 .price {
   font-family: var(--cb-font-display);
   color: var(--cb-neon-cyan);
   font-size: 32px;
   font-weight: 700;
-  margin-bottom: 16px;
+  margin: 0;
   text-shadow: 0 0 20px rgba(201, 169, 98, 0.45);
+}
+
+.price.promo {
+  color: #e74c3c;
+  text-shadow: 0 0 20px rgba(231, 76, 60, 0.35);
+}
+
+.orig-price {
+  margin: 0;
+  font-size: 18px;
+  color: var(--cb-text-muted);
+  text-decoration: line-through;
 }
 
 .desc {

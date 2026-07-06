@@ -4,6 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { RedisService } from '../common/redis/redis.service';
 import { UserRole } from '../user/entities/user.entity';
+import { UserService } from '../user/user.service';
 import { AuthService, JwtPayload } from './auth.service';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     configService: ConfigService,
     private readonly redisService: RedisService,
+    private readonly userService: UserService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -26,6 +28,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!isValid) {
       throw new UnauthorizedException('Token revoked or expired');
     }
+    await this.userService.assertUserCanAccess(payload.sub);
+    await this.userService.touchLastActive(payload.sub);
     return {
       id: payload.sub,
       email: payload.email,

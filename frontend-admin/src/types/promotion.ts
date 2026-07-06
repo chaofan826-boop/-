@@ -51,5 +51,5 @@ export interface UpdatePromotionPayload extends CreatePromotionPayload {
 export const PROMOTION_TYPE_LABELS: Record<PromotionType, string> = {
   featured: '臻品推荐',
   flash_sale: '限时秒杀',
-  discount: '折扣活动',
+  discount: '新人专享',
 }

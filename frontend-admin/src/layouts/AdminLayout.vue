@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { getChatUnreadCount } from '@/api/chat'
 import { useUserStore } from '@/stores/user'
-import { DataBoard, ChatDotRound, Goods, Menu, Picture, Promotion, ShoppingCart, SwitchButton, User } from '@element-plus/icons-vue'
+import { DataBoard, ChatDotRound, Goods, Menu, Picture, Promotion, ShoppingCart, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -116,6 +116,10 @@ async function handleLogout() {
         <el-menu-item index="/orders">
           <el-icon><ShoppingCart /></el-icon>
           <span>订单管理</span>
+        </el-menu-item>
+        <el-menu-item index="/users">
+          <el-icon><UserFilled /></el-icon>
+          <span>用户管理</span>
         </el-menu-item>
         <el-menu-item index="/chat">
           <el-icon><ChatDotRound /></el-icon>

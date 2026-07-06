@@ -151,12 +151,41 @@ onMounted(async () => {
 </script>
 <template>
   <div>
-    <section v-if="banners.length" class="banner-section">
+    <section class="hero home-wide-block">
+      <div class="hero-bg" />
+      <div class="hero-line" />
+      <div class="hero-content">
+        <p class="hero-badge">PREMIUM COLLECTION</p>
+        <h1>
+          <span class="hero-title-main">全球臻品</span>
+          <span class="hero-title-sub">尊享跨境购物体验</span>
+        </h1>
+        <p class="hero-desc">甄选全球好物 · 品质臻选 · 尊享直邮</p>
+        <div class="hero-stats">
+          <div class="stat">
+            <span class="stat-num">50+</span>
+            <span class="stat-label">国家直邮</span>
+          </div>
+          <div class="stat-divider" />
+          <div class="stat">
+            <span class="stat-num">24h</span>
+            <span class="stat-label">极速发货</span>
+          </div>
+          <div class="stat-divider" />
+          <div class="stat">
+            <span class="stat-num">100%</span>
+            <span class="stat-label">正品保障</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="banners.length" class="banner-section home-wide-block">
       <div class="banner-frame">
         <div class="banner-glow" />
         <el-carousel
           ref="carouselRef"
-          height="360px"
+          height="420px"
           :interval="5000"
           arrow="never"
           indicator-position="outside"
@@ -198,35 +227,6 @@ onMounted(async () => {
           <span class="counter-current">{{ String(activeBannerIndex + 1).padStart(2, '0') }}</span>
           <span class="counter-sep">/</span>
           <span class="counter-total">{{ String(banners.length).padStart(2, '0') }}</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="hero">
-      <div class="hero-bg" />
-      <div class="hero-line" />
-      <div class="hero-content">
-        <p class="hero-badge">PREMIUM COLLECTION</p>
-        <h1>
-          <span class="hero-title-main">全球臻品</span>
-          <span class="hero-title-sub">尊享跨境购物体验</span>
-        </h1>
-        <p class="hero-desc">甄选全球好物 · 品质臻选 · 尊享直邮</p>
-        <div class="hero-stats">
-          <div class="stat">
-            <span class="stat-num">50+</span>
-            <span class="stat-label">国家直邮</span>
-          </div>
-          <div class="stat-divider" />
-          <div class="stat">
-            <span class="stat-num">24h</span>
-            <span class="stat-label">极速发货</span>
-          </div>
-          <div class="stat-divider" />
-          <div class="stat">
-            <span class="stat-num">100%</span>
-            <span class="stat-label">正品保障</span>
-          </div>
         </div>
       </div>
     </section>
@@ -281,6 +281,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.home-wide-block {
+  --banner-bleed: 28px;
+  width: calc(100% + var(--banner-bleed) * 2);
+  max-width: min(1320px, calc(100vw - 32px));
+  margin-left: calc(-1 * var(--banner-bleed));
+  margin-right: calc(-1 * var(--banner-bleed));
+}
+
 .banner-section {
   margin-bottom: 32px;
 }
@@ -427,7 +435,7 @@ onMounted(async () => {
 .banner-slide {
   position: relative;
   width: 100%;
-  height: 360px;
+  height: 420px;
   cursor: pointer;
   overflow: hidden;
 }
@@ -704,12 +712,20 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
+  .home-wide-block {
+    --banner-bleed: 0px;
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
   .banner-frame :deep(.el-carousel) {
-    height: 220px !important;
+    height: 260px !important;
   }
 
   .banner-slide {
-    height: 220px;
+    height: 260px;
   }
 
   .banner-nav {

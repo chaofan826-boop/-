@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Menu, Search, Service, ShoppingCart, Top, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Menu, Search, Service, ShoppingCart, Top, User } from '@element-plus/icons-vue'
 import { getChatUnreadCount } from '@/api/chat'
 import { getCategories } from '@/api/product'
 import ChatPanel from '@/components/ChatPanel.vue'
@@ -35,12 +35,38 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-const navLinks = [
+type NavLink = {
+  path: string
+  label: string
+  auth?: boolean
+}
+
+const navLinks: NavLink[] = [
   { path: '/', label: '首页' },
   { path: '/cart', label: '购物车' },
+  { path: '/orders', label: '我的订单', auth: true },
 ]
 
-const isActive = (path: string) => route.path === path
+const isActive = (path: string) => {
+  if (path === '/orders') {
+    return route.path === '/orders' || /^\/orders\/\d+/.test(route.path)
+  }
+  return route.path === path
+}
+
+const showNavBack = computed(() => {
+  if (chatOpen.value) return false
+  return route.path !== '/'
+})
+
+function goBack() {
+  menuOpen.value = false
+  if (window.history.state?.back) {
+    router.back()
+    return
+  }
+  router.push('/')
+}
 
 function categoryLabel(cat: Category) {
   return appStore.locale === 'zh' ? cat.name.zh : cat.name.en
@@ -65,6 +91,16 @@ function syncCategoryFromRoute() {
 function navigate(path: string) {
   menuOpen.value = false
   router.push(path)
+}
+
+function navigateNav(link: NavLink) {
+  menuOpen.value = false
+  if (link.auth && !userStore.token) {
+    ElMessage.warning('请先登录后查看订单')
+    router.push({ path: '/login', query: { redirect: link.path } })
+    return
+  }
+  router.push(link.path)
 }
 
 function submitSearch() {
@@ -169,9 +205,24 @@ watch(chatOpen, (open) => {
 
       <div class="header-inner">
 
-        <div class="left">
+        <div class="header-left">
 
-          <el-button class="menu-btn" :icon="Menu" text @click="menuOpen = !menuOpen" />
+          <el-button
+            v-if="showNavBack"
+            class="back-btn"
+            :icon="ArrowLeft"
+            text
+            aria-label="返回"
+            @click="goBack"
+          />
+
+          <el-button
+            v-else
+            class="menu-btn"
+            :icon="Menu"
+            text
+            @click="menuOpen = !menuOpen"
+          />
 
           <div class="brand" @click="navigate('/')">
 
@@ -193,7 +244,7 @@ watch(chatOpen, (open) => {
 
 
 
-        <div class="header-search">
+        <div class="header-center">
           <el-input
             v-model="searchKeyword"
             placeholder="搜索商品..."
@@ -211,85 +262,85 @@ watch(chatOpen, (open) => {
 
 
 
-        <nav class="nav-desktop">
-          <el-select
-            :model-value="selectedCategoryId"
-            :placeholder="appStore.locale === 'zh' ? '精选分类' : 'Categories'"
-            clearable
-            class="category-select"
-            @change="handleCategoryChange"
-          >
-            <el-option
-              v-for="cat in categories"
-              :key="cat.id"
-              :label="categoryLabel(cat)"
-              :value="cat.id"
-            />
-          </el-select>
+        <div class="header-right">
+          <nav class="nav-desktop">
+            <el-select
+              :model-value="selectedCategoryId"
+              :placeholder="appStore.locale === 'zh' ? '精选分类' : 'Categories'"
+              clearable
+              class="category-select"
+              @change="handleCategoryChange"
+            >
+              <el-option
+                v-for="cat in categories"
+                :key="cat.id"
+                :label="categoryLabel(cat)"
+                :value="cat.id"
+              />
+            </el-select>
 
-          <a
-            v-for="link in navLinks"
-            :key="link.path"
-            :class="{ active: isActive(link.path) }"
-            @click="navigate(link.path)"
-          >
-            <span class="nav-dot" />
-            {{ link.label }}
-          </a>
-
-          <el-badge
-            :value="chatUnreadCount"
-            :hidden="!chatUnreadCount || !userStore.token"
-            class="cs-badge"
-          >
-            <a class="cs-link" @click="openChat">
+            <a
+              v-for="link in navLinks"
+              :key="link.path"
+              :class="{ active: isActive(link.path) }"
+              @click="navigateNav(link)"
+            >
               <span class="nav-dot" />
-              <el-icon class="cs-icon"><Service /></el-icon>
-              联系客服
+              {{ link.label }}
             </a>
-          </el-badge>
-        </nav>
+
+            <el-badge
+              :value="chatUnreadCount"
+              :hidden="!chatUnreadCount || !userStore.token"
+              class="cs-badge"
+            >
+              <a class="cs-link" @click="openChat">
+                <span class="nav-dot" />
+                <el-icon class="cs-icon"><Service /></el-icon>
+                联系客服
+              </a>
+            </el-badge>
+          </nav>
+
+          <div class="header-actions">
+
+            <el-select
+
+              :model-value="appStore.currency"
+
+              size="small"
+
+              class="currency-select"
+
+              @change="(v: 'USD' | 'CNY') => appStore.setCurrency(v)"
+
+            >
+
+              <el-option label="USD $" value="USD" />
+
+              <el-option label="CNY ¥" value="CNY" />
+
+            </el-select>
 
 
 
-        <div class="header-actions">
+            <el-badge :value="cartStore.count" :hidden="!cartStore.count" class="cart-badge">
 
-          <el-select
+              <el-button class="icon-btn" :icon="ShoppingCart" circle @click="navigate('/cart')" />
 
-            :model-value="appStore.currency"
-
-            size="small"
-
-            class="currency-select"
-
-            @change="(v: 'USD' | 'CNY') => appStore.setCurrency(v)"
-
-          >
-
-            <el-option label="USD $" value="USD" />
-
-            <el-option label="CNY ¥" value="CNY" />
-
-          </el-select>
+            </el-badge>
 
 
 
-          <el-badge :value="cartStore.count" :hidden="!cartStore.count" class="cart-badge">
+            <el-button v-if="!userStore.token" type="primary" size="small" class="login-btn" @click="navigate('/login')">
 
-            <el-button class="icon-btn" :icon="ShoppingCart" circle @click="navigate('/cart')" />
+              登录
 
-          </el-badge>
+            </el-button>
 
+            <el-button v-else class="icon-btn" :icon="User" circle @click="navigate('/user')" />
 
-
-          <el-button v-if="!userStore.token" type="primary" size="small" class="login-btn" @click="navigate('/login')">
-
-            登录
-
-          </el-button>
-
-          <el-button v-else class="icon-btn" :icon="User" circle @click="navigate('/user')" />
-
+          </div>
         </div>
 
       </div>
@@ -330,7 +381,7 @@ watch(chatOpen, (open) => {
             />
           </el-select>
 
-          <a v-for="link in navLinks" :key="link.path" @click="navigate(link.path)">{{ link.label }}</a>
+          <a v-for="link in navLinks" :key="link.path" @click="navigateNav(link)">{{ link.label }}</a>
 
           <a class="mobile-cs-link" @click="openChat">
             联系客服
@@ -447,11 +498,13 @@ watch(chatOpen, (open) => {
 
 .header-inner {
 
-  max-width: 1200px;
+  max-width: 1280px;
 
   margin: 0 auto;
 
-  padding: 14px 16px;
+  padding: 18px 32px;
+
+  min-height: 68px;
 
   display: flex;
 
@@ -459,20 +512,41 @@ watch(chatOpen, (open) => {
 
   justify-content: space-between;
 
-  gap: 16px;
+  gap: 20px;
 
 }
 
 
 
-.left {
+.header-left {
 
   display: flex;
 
   align-items: center;
 
-  gap: 4px;
+  gap: 6px;
 
+  flex-shrink: 0;
+
+}
+
+
+
+.header-center {
+  flex: 1;
+  max-width: 380px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 
@@ -483,6 +557,16 @@ watch(chatOpen, (open) => {
 
   color: var(--cb-text) !important;
 
+}
+
+.back-btn {
+  display: inline-flex;
+  color: var(--cb-text) !important;
+  font-size: 20px;
+}
+
+.back-btn:hover {
+  color: var(--cb-accent) !important;
 }
 
 
@@ -503,9 +587,9 @@ watch(chatOpen, (open) => {
 
 .brand-icon {
 
-  width: 36px;
+  width: 40px;
 
-  height: 36px;
+  height: 40px;
 
   border-radius: 10px;
 
@@ -573,14 +657,6 @@ watch(chatOpen, (open) => {
 
 
 
-.header-search {
-  flex: 1;
-  max-width: 360px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .search-input {
   flex: 1;
 }
@@ -605,7 +681,7 @@ watch(chatOpen, (open) => {
 .nav-desktop {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .category-select {
@@ -727,7 +803,11 @@ watch(chatOpen, (open) => {
 
   align-items: center;
 
-  gap: 10px;
+  gap: 12px;
+
+  padding-left: 16px;
+
+  border-left: 1px solid rgba(201, 169, 98, 0.15);
 
 }
 
@@ -849,7 +929,7 @@ watch(chatOpen, (open) => {
 
   flex: 1;
 
-  max-width: 1200px;
+  max-width: 1280px;
 
   width: 100%;
 
@@ -967,25 +1047,23 @@ watch(chatOpen, (open) => {
     height: 48px;
   }
 
+  .header-inner {
+    padding: 16px 16px;
+    min-height: 60px;
+    gap: 12px;
+  }
+
+  .header-center {
+    display: none;
+  }
+
+  .header-right {
+    display: none;
+  }
+
   .menu-btn {
 
     display: inline-flex;
-
-  }
-
-
-
-  .header-search {
-
-    display: none;
-
-  }
-
-
-
-  .nav-desktop {
-
-    display: none;
 
   }
 

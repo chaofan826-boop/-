@@ -48,6 +48,12 @@ const router = createRouter({
           component: () => import('@/views/Orders.vue'),
         },
         {
+          path: 'users',
+          name: 'Users',
+          meta: { title: '用户管理' },
+          component: () => import('@/views/Users.vue'),
+        },
+        {
           path: 'chat',
           name: 'Chat',
           meta: { title: '客服消息' },
