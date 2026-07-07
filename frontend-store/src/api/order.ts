@@ -11,7 +11,7 @@ export interface OrderItem {
 }
 
 export interface Order {
-  id: number
+  orderNo: string
   totalAmount: number
   status: string
   shippingAddress: string
@@ -21,7 +21,7 @@ export interface Order {
 
 export const getOrders = () => get<Order[]>('/orders')
 
-export const getOrder = (id: number) => get<Order>(`/orders/${id}`)
+export const getOrder = (orderNo: string) => get<Order>(`/orders/${orderNo}`)
 
 export const createOrder = (data: {
   shippingAddress: string

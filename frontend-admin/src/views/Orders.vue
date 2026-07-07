@@ -28,14 +28,14 @@ const shipDialogVisible = ref(false)
 
 const shipLoading = ref(false)
 
-const shippingOrderId = ref<number | null>(null)
+const shippingOrderNo = ref<string | null>(null)
 
 const editDialogVisible = ref(false)
 
 const editLoading = ref(false)
 
 const editForm = reactive({
-  id: 0,
+  orderNo: '',
   customerName: '',
   shippingAddress: '',
   status: '',
@@ -193,9 +193,9 @@ async function loadOrders() {
 
 
 
-async function changeStatus(id: number, status: string) {
+async function changeStatus(orderNo: string, status: string) {
 
-  await updateOrderStatus(id, status)
+  await updateOrderStatus(orderNo, status)
 
   ElMessage.success('订单状态已更新')
 
@@ -207,7 +207,7 @@ async function changeStatus(id: number, status: string) {
 
 function openShipDialog(row: Order) {
 
-  shippingOrderId.value = row.id
+  shippingOrderNo.value = row.orderNo
 
   shipForm.trackingNumber = ''
 
@@ -218,7 +218,7 @@ function openShipDialog(row: Order) {
 }
 
 function openEditDialog(row: Order) {
-  editForm.id = row.id
+  editForm.orderNo = row.orderNo
   editForm.customerName = row.user?.name || '—'
   editForm.shippingAddress = row.shippingAddress
   editForm.status = row.status
@@ -254,7 +254,7 @@ async function handleSaveEdit() {
 
   editLoading.value = true
   try {
-    await updateOrder(editForm.id, {
+    await updateOrder(editForm.orderNo, {
       shippingAddress: editForm.shippingAddress.trim(),
       status: editForm.status,
       items: editForm.items.map((item) => ({
@@ -274,7 +274,7 @@ async function handleSaveEdit() {
 async function handleDelete(row: Order) {
   try {
     await ElMessageBox.confirm(
-      `确定删除订单 #${row.id}？删除后无法恢复，关联物流信息也会一并删除。`,
+      `确定删除订单 ${row.orderNo}？删除后无法恢复，关联物流信息也会一并删除。`,
       '删除订单',
       { type: 'warning', confirmButtonText: '删除' },
     )
@@ -282,7 +282,7 @@ async function handleDelete(row: Order) {
     return
   }
 
-  await deleteOrder(row.id)
+  await deleteOrder(row.orderNo)
   ElMessage.success('订单已删除')
   await loadOrders()
 }
@@ -291,7 +291,7 @@ async function handleDelete(row: Order) {
 
 async function handleShip() {
 
-  if (!shippingOrderId.value) return
+  if (!shippingOrderNo.value) return
 
   if (!shipForm.trackingNumber.trim()) {
 
@@ -309,7 +309,7 @@ async function handleShip() {
 
     await createShipping({
 
-      orderId: shippingOrderId.value,
+      orderNo: shippingOrderNo.value,
 
       trackingNumber: shipForm.trackingNumber.trim(),
 
@@ -394,7 +394,7 @@ onMounted(loadOrders)
 
       <el-table v-loading="loading" :data="filteredOrders" stripe>
 
-        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="orderNo" label="订单编号" min-width="180" />
 
         <el-table-column label="客户" min-width="160">
 
@@ -455,7 +455,7 @@ onMounted(loadOrders)
 
               size="small"
 
-              @change="(v: string) => changeStatus(row.id, v)"
+              @change="(v: string) => changeStatus(row.orderNo, v)"
 
             >
 
@@ -517,7 +517,7 @@ onMounted(loadOrders)
     <el-dialog v-model="editDialogVisible" title="编辑订单" width="720px" destroy-on-close>
       <el-form label-width="88px">
         <el-form-item label="订单号">
-          <el-input :model-value="String(editForm.id)" disabled />
+          <el-input :model-value="editForm.orderNo" disabled />
         </el-form-item>
         <el-form-item label="客户">
           <el-input :model-value="editForm.customerName" disabled />
@@ -570,7 +570,7 @@ onMounted(loadOrders)
 
         <el-form-item label="订单号">
 
-          <el-input :model-value="String(shippingOrderId ?? '')" disabled />
+          <el-input :model-value="shippingOrderNo ?? ''" disabled />
 
         </el-form-item>
 

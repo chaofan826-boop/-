@@ -85,13 +85,13 @@ onMounted(loadOrders)
 
       <div
         v-for="order in filteredOrders"
-        :key="order.id"
+        :key="order.orderNo"
         class="order-card"
-        @click="router.push(`/orders/${order.id}`)"
+        @click="router.push(`/orders/${order.orderNo}`)"
       >
         <div class="order-header">
           <div class="order-meta">
-            <span class="order-no">订单 #{{ order.id }}</span>
+            <span class="order-no">{{ order.orderNo }}</span>
             <span class="order-time">{{ new Date(order.createdAt).toLocaleString() }}</span>
           </div>
           <el-tag size="small" :type="order.status === 'cancelled' ? 'info' : undefined">

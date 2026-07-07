@@ -32,9 +32,9 @@ export class ShippingService {
   ) {}
 
   async create(dto: CreateShippingDto) {
-    const order = await this.orderRepository.findOne({ where: { id: dto.orderId } });
+    const order = await this.orderRepository.findOne({ where: { orderNo: dto.orderNo } });
     if (!order) {
-      throw new NotFoundException(`Order #${dto.orderId} not found`);
+      throw new NotFoundException(`Order ${dto.orderNo} not found`);
     }
     if (order.status === OrderStatus.CANCELLED) {
       throw new BadRequestException('Cannot ship a cancelled order');
@@ -43,14 +43,14 @@ export class ShippingService {
       throw new BadRequestException('Order must be paid before shipping');
     }
 
-    const existing = await this.shippingRepository.findOne({ where: { orderId: dto.orderId } });
+    const existing = await this.shippingRepository.findOne({ where: { orderId: order.id } });
     if (existing) {
-      throw new ConflictException(`Order #${dto.orderId} already has shipping info`);
+      throw new ConflictException(`Order ${dto.orderNo} already has shipping info`);
     }
 
     const shippedAt = new Date();
     const shipping = this.shippingRepository.create({
-      orderId: dto.orderId,
+      orderId: order.id,
       trackingNumber: dto.trackingNumber.trim(),
       carrier: dto.carrier,
       status: ShippingStatus.IN_TRANSIT,
@@ -60,20 +60,25 @@ export class ShippingService {
     await this.shippingRepository.save(shipping);
 
     if (order.status === OrderStatus.PAID) {
-      await this.orderRepository.update(dto.orderId, { status: OrderStatus.SHIPPED });
+      await this.orderRepository.update(order.id, { status: OrderStatus.SHIPPED });
     }
 
-    return this.findByOrderId(dto.orderId);
+    return this.findByOrderNo(dto.orderNo);
   }
 
-  async track(orderId: number, userId: number, isAdmin: boolean) {
+  async track(orderNo: string, userId: number, isAdmin: boolean) {
+    const order = await this.orderRepository.findOne({ where: { orderNo } });
+    if (!order) {
+      throw new NotFoundException(`Order ${orderNo} not found`);
+    }
+
     const shipping = await this.shippingRepository.findOne({
-      where: { orderId },
+      where: { orderId: order.id },
       relations: { order: true },
     });
 
     if (!shipping) {
-      throw new NotFoundException(`Shipping for order #${orderId} not found`);
+      throw new NotFoundException(`Shipping for order ${orderNo} not found`);
     }
 
     if (!isAdmin && shipping.order.userId !== userId) {
@@ -81,7 +86,7 @@ export class ShippingService {
     }
 
     return {
-      orderId: shipping.orderId,
+      orderNo: order.orderNo,
       trackingNumber: shipping.trackingNumber,
       carrier: shipping.carrier,
       status: shipping.status,
@@ -90,10 +95,15 @@ export class ShippingService {
     };
   }
 
-  async findByOrderId(orderId: number) {
-    const shipping = await this.shippingRepository.findOne({ where: { orderId } });
+  async findByOrderNo(orderNo: string) {
+    const order = await this.orderRepository.findOne({ where: { orderNo } });
+    if (!order) {
+      throw new NotFoundException(`Order ${orderNo} not found`);
+    }
+
+    const shipping = await this.shippingRepository.findOne({ where: { orderId: order.id } });
     if (!shipping) {
-      throw new NotFoundException(`Shipping for order #${orderId} not found`);
+      throw new NotFoundException(`Shipping for order ${orderNo} not found`);
     }
     return shipping;
   }

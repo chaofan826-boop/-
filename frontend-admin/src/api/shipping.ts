@@ -13,7 +13,7 @@ export interface Shipping {
 }
 
 export interface CreateShippingPayload {
-  orderId: number
+  orderNo: string
   trackingNumber: string
   carrier: ShippingCarrier
 }
@@ -21,15 +21,15 @@ export interface CreateShippingPayload {
 export const createShipping = (data: CreateShippingPayload) =>
   post<Shipping>('/shipping/create', data)
 
-export const trackShipping = (orderId: number) =>
+export const trackShipping = (orderNo: string) =>
   get<{
-    orderId: number
+    orderNo: string
     trackingNumber: string
     carrier: ShippingCarrier
     status: string
     shippedAt: string | null
     events: TrackingEvent[]
-  }>(`/shipping/track/${orderId}`)
+  }>(`/shipping/track/${orderNo}`)
 
 export interface TrackingEvent {
   time: string

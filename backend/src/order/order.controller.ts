@@ -4,7 +4,6 @@ import {
   Delete,
   Get,
   Param,
-  ParseIntPipe,
   Patch,
   Post,
   Request,
@@ -39,29 +38,29 @@ export class OrderController {
     return this.orderService.findAll(isAdmin ? undefined : req.user.id, isAdmin);
   }
 
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.orderService.findOne(id);
+  @Get(':orderNo')
+  findOne(@Param('orderNo') orderNo: string) {
+    return this.orderService.findOne(orderNo);
   }
 
-  @Patch(':id/status')
+  @Patch(':orderNo/status')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderStatusDto) {
-    return this.orderService.updateStatus(id, dto.status);
+  updateStatus(@Param('orderNo') orderNo: string, @Body() dto: UpdateOrderStatusDto) {
+    return this.orderService.updateStatus(orderNo, dto.status);
   }
 
-  @Patch(':id')
+  @Patch(':orderNo')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderDto) {
-    return this.orderService.adminUpdate(id, dto);
+  update(@Param('orderNo') orderNo: string, @Body() dto: UpdateOrderDto) {
+    return this.orderService.adminUpdate(orderNo, dto);
   }
 
-  @Delete(':id')
+  @Delete(':orderNo')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.orderService.adminRemove(id);
+  remove(@Param('orderNo') orderNo: string) {
+    return this.orderService.adminRemove(orderNo);
   }
 }

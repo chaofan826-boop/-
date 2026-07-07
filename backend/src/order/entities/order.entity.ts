@@ -24,6 +24,9 @@ export class Order {
   @PrimaryGeneratedColumn()
   id: number;
 
+  @Column({ name: 'order_no', type: 'varchar', length: 32, nullable: true })
+  orderNo: string;
+
   @Column({ name: 'user_id' })
   userId: number;
 

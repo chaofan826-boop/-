@@ -18,7 +18,7 @@ export interface OrderItem {
 }
 
 export interface Order {
-  id: number
+  orderNo: string
   userId: number
   totalAmount: number
   status: string
@@ -29,9 +29,9 @@ export interface Order {
 }
 
 export const getOrders = () => get<Order[]>('/orders')
-export const getOrder = (id: number) => get<Order>(`/orders/${id}`)
-export const updateOrderStatus = (id: number, status: string) =>
-  patch<Order>(`/orders/${id}/status`, { status })
+export const getOrder = (orderNo: string) => get<Order>(`/orders/${orderNo}`)
+export const updateOrderStatus = (orderNo: string, status: string) =>
+  patch<Order>(`/orders/${orderNo}/status`, { status })
 
 export interface UpdateOrderPayload {
   shippingAddress?: string
@@ -39,7 +39,7 @@ export interface UpdateOrderPayload {
   items?: { id: number; quantity: number; price: number }[]
 }
 
-export const updateOrder = (id: number, data: UpdateOrderPayload) =>
-  patch<Order>(`/orders/${id}`, data)
+export const updateOrder = (orderNo: string, data: UpdateOrderPayload) =>
+  patch<Order>(`/orders/${orderNo}`, data)
 
-export const deleteOrder = (id: number) => del<{ id: number }>(`/orders/${id}`)
+export const deleteOrder = (orderNo: string) => del<{ orderNo: string }>(`/orders/${orderNo}`)

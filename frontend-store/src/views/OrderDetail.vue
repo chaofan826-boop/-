@@ -38,15 +38,15 @@ function formatTime(iso: string) {
 }
 
 async function loadData() {
-  const id = Number(route.params.id)
-  if (!id) return
+  const orderNo = String(route.params.orderNo || '')
+  if (!orderNo) return
 
   loading.value = true
   try {
-    order.value = await getOrder(id)
+    order.value = await getOrder(orderNo)
     if (order.value.status === 'shipped' || order.value.status === 'completed') {
       try {
-        shipping.value = await trackShipping(id)
+        shipping.value = await trackShipping(orderNo)
       } catch {
         shipping.value = null
       }
@@ -63,11 +63,15 @@ onMounted(loadData)
   <div v-loading="loading" class="order-detail">
     <div class="page-header">
       <el-button link @click="router.push('/orders')">← 返回订单列表</el-button>
-      <h2 class="page-title">订单详情 #{{ order?.id }}</h2>
+      <h2 class="page-title">订单详情 {{ order?.orderNo }}</h2>
     </div>
 
     <template v-if="order">
       <el-card shadow="never" class="info-card">
+        <div class="info-row">
+          <span class="label">订单编号</span>
+          <span class="order-no">{{ order.orderNo }}</span>
+        </div>
         <div class="info-row">
           <span class="label">订单状态</span>
           <el-tag>{{ statusMap[order.status] || order.status }}</el-tag>
@@ -187,6 +191,12 @@ onMounted(loadData)
 .label {
   color: var(--cb-text-muted);
   font-size: 14px;
+}
+
+.order-no {
+  font-family: var(--cb-font-mono);
+  letter-spacing: 0.04em;
+  color: var(--cb-text);
 }
 
 .amount {

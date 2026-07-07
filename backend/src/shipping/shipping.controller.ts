@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../user/entities/user.entity';
@@ -16,12 +16,12 @@ export class ShippingController {
     return this.shippingService.create(dto);
   }
 
-  @Get('track/:orderId')
+  @Get('track/:orderNo')
   track(
-    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('orderNo') orderNo: string,
     @Request() req: { user: { id: number; role: UserRole } },
   ) {
     const isAdmin = req.user.role === UserRole.ADMIN;
-    return this.shippingService.track(orderId, req.user.id, isAdmin);
+    return this.shippingService.track(orderNo, req.user.id, isAdmin);
   }
 }

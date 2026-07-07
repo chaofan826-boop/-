@@ -10,7 +10,7 @@ export interface TrackingEvent {
 }
 
 export interface ShippingTrack {
-  orderId: number
+  orderNo: string
   trackingNumber: string
   carrier: ShippingCarrier
   status: string
@@ -18,5 +18,5 @@ export interface ShippingTrack {
   events: TrackingEvent[]
 }
 
-export const trackShipping = (orderId: number) =>
-  get<ShippingTrack>(`/shipping/track/${orderId}`)
+export const trackShipping = (orderNo: string) =>
+  get<ShippingTrack>(`/shipping/track/${orderNo}`)
