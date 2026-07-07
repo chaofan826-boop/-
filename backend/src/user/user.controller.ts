@@ -4,6 +4,7 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { AdminResetPasswordDto } from './dto/admin-reset-password.dto';
+import { BatchDeleteDto } from '../common/dto/batch-delete.dto';
 import { AdminUpdateUserStatusDto } from './dto/admin-update-user-status.dto';
 import { CreateSubAdminDto } from './dto/create-sub-admin.dto';
 import { QueryAdminUsersDto } from './dto/query-admin-users.dto';
@@ -62,6 +63,13 @@ export class UserController {
     @Body() dto: AdminUpdateUserStatusDto,
   ) {
     return this.userService.adminUpdateStatus(dto.userId, dto.status, req.user.role);
+  }
+
+  @Post('batch-delete')
+  @AdminRoles()
+  @RequirePermissions('users')
+  batchRemove(@Request() req: { user: { role: UserRole } }, @Body() dto: BatchDeleteDto) {
+    return this.userService.adminBatchDelete(dto.ids, req.user.role);
   }
 
   @Delete(':id')

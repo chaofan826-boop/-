@@ -151,7 +151,7 @@ watch(
           <el-checkbox
             class="item-checkbox"
             :model-value="cartStore.isSelected(item.productSkuId)"
-            @change="(checked) => handleItemSelect(item.productSkuId, checked)"
+            @change="(checked: boolean | string | number) => handleItemSelect(item.productSkuId, checked)"
             @click.stop
           />
           <img

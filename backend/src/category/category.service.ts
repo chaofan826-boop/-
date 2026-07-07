@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { runBatchDelete } from '../common/utils/batch-delete.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { QueryCategoryDto } from './dto/query-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -51,6 +52,10 @@ export class CategoryService {
     }
     await this.categoryRepository.softDelete(id);
     return null;
+  }
+
+  removeMany(ids: number[]) {
+    return runBatchDelete(ids, (id) => this.remove(id));
   }
 
   async ensureExists(id: number) {

@@ -1,16 +1,19 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
 import { ProductSku } from '../product/entities/product-sku.entity';
 import { ProductService } from '../product/product.service';
 import { ProductPricingService } from '../promotion/product-pricing.service';
 import { STAFF_ROLES } from '../common/constants/user-roles';
+import { batchDeleteErrorMessage } from '../common/utils/batch-delete.util';
 import { UserRole } from '../user/entities/user.entity';
 import { Shipping } from '../shipping/entities/shipping.entity';
 import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
+import { QueryOrderDto } from './dto/query-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderItem } from './entities/order-item.entity';
-import { Order, OrderStatus } from './entities/order.entity';
+import { Order, OrderStatus, PaymentMethod } from './entities/order.entity';
+import { buildPendingPayExpiresAt, PENDING_ORDER_PAY_TIMEOUT_MS } from './order.constants';
 import { generateOrderNo } from './order-no.util';
 
 @Injectable()
@@ -30,6 +33,7 @@ export class OrderService implements OnModuleInit {
   async onModuleInit() {
     await this.backfillOrderNumbers();
     await this.ensureOrderNoIndex();
+    await this.backfillPayExpiresAt();
   }
 
   async create(userId: number, dto: CreateOrderDto) {
@@ -82,6 +86,7 @@ export class OrderService implements OnModuleInit {
         totalAmount,
         shippingAddress: dto.shippingAddress,
         status: OrderStatus.PENDING,
+        payExpiresAt: buildPendingPayExpiresAt(),
         items: orderItems as OrderItem[],
       });
 
@@ -98,7 +103,9 @@ export class OrderService implements OnModuleInit {
     });
   }
 
-  findAll(userId?: number, isAdmin = false) {
+  async findAll(userId?: number, isAdmin = false, query?: QueryOrderDto) {
+    await this.expirePendingOrders(isAdmin ? undefined : userId);
+
     if (!isAdmin) {
       return this.orderRepository.find({
         where: { userId },
@@ -107,15 +114,46 @@ export class OrderService implements OnModuleInit {
       });
     }
 
-    return this.orderRepository
+    const qb = this.orderRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.user', 'user')
       .leftJoinAndSelect('order.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('items.productSku', 'productSku')
-      .where('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
-      .orderBy('order.created_at', 'DESC')
-      .getMany();
+      .where('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES });
+
+    if (query?.status) {
+      qb.andWhere('order.status = :status', { status: query.status });
+    }
+
+    if (query?.paymentMethod) {
+      qb.andWhere('order.payment_method = :paymentMethod', { paymentMethod: query.paymentMethod });
+    }
+
+    if (query?.keyword?.trim()) {
+      const keyword = `%${query.keyword.trim()}%`;
+      qb.andWhere(
+        `(order.order_no LIKE :keyword
+          OR user.name LIKE :keyword
+          OR user.email LIKE :keyword
+          OR order.shipping_address LIKE :keyword
+          OR JSON_UNQUOTE(JSON_EXTRACT(product.title, '$.zh')) LIKE :keyword
+          OR JSON_UNQUOTE(JSON_EXTRACT(product.title, '$.en')) LIKE :keyword)`,
+        { keyword },
+      );
+    }
+
+    if (query?.startDate) {
+      qb.andWhere('order.created_at >= :startDate', { startDate: query.startDate });
+    }
+
+    if (query?.endDate) {
+      const endDate = new Date(query.endDate);
+      endDate.setDate(endDate.getDate() + 1);
+      qb.andWhere('order.created_at < :endDateExclusive', { endDateExclusive: endDate.toISOString() });
+    }
+
+    return qb.orderBy('order.created_at', 'DESC').getMany();
   }
 
   async findOne(orderNo: string) {
@@ -124,12 +162,52 @@ export class OrderService implements OnModuleInit {
       relations: { items: { product: true, productSku: true }, user: true },
     });
     if (!order) throw new NotFoundException(`Order ${orderNo} not found`);
+
+    if (order.status === OrderStatus.PENDING && this.isPayExpired(order)) {
+      await this.cancelPendingOrderInternal(order);
+      order.status = OrderStatus.CANCELLED;
+    }
+
     return order;
   }
 
   async updateStatus(orderNo: string, status: OrderStatus) {
     const order = await this.findOne(orderNo);
     await this.orderRepository.update(order.id, { status });
+    return this.findOne(orderNo);
+  }
+
+  async pay(userId: number, orderNo: string, paymentMethod: PaymentMethod) {
+    const order = await this.findOne(orderNo);
+    if (order.userId !== userId) {
+      throw new ForbiddenException('You can only pay your own orders');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Only pending orders can be paid');
+    }
+    if (this.isPayExpired(order)) {
+      await this.cancelPendingOrderInternal(order);
+      throw new BadRequestException('Order payment window has expired');
+    }
+
+    await this.orderRepository.update(order.id, {
+      status: OrderStatus.PAID,
+      paymentMethod,
+      payExpiresAt: null,
+    });
+    return this.findOne(orderNo);
+  }
+
+  async userCancel(userId: number, orderNo: string) {
+    const order = await this.findOne(orderNo);
+    if (order.userId !== userId) {
+      throw new ForbiddenException('You can only cancel your own orders');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Only pending orders can be cancelled');
+    }
+
+    await this.cancelPendingOrderInternal(order);
     return this.findOne(orderNo);
   }
 
@@ -197,6 +275,34 @@ export class OrderService implements OnModuleInit {
     return { orderNo };
   }
 
+  async userRemove(userId: number, orderNo: string) {
+    const order = await this.findOne(orderNo);
+    if (order.userId !== userId) {
+      throw new ForbiddenException('You can only delete your own orders');
+    }
+    if (order.status !== OrderStatus.COMPLETED && order.status !== OrderStatus.CANCELLED) {
+      throw new BadRequestException('Only completed or cancelled orders can be deleted');
+    }
+
+    return this.adminRemove(orderNo);
+  }
+
+  async adminRemoveMany(orderNos: string[]) {
+    const deleted: string[] = [];
+    const failed: Array<{ orderNo: string; reason: string }> = [];
+
+    for (const orderNo of orderNos) {
+      try {
+        await this.adminRemove(orderNo);
+        deleted.push(orderNo);
+      } catch (error) {
+        failed.push({ orderNo, reason: batchDeleteErrorMessage(error) });
+      }
+    }
+
+    return { deleted, failed };
+  }
+
   /** Merge duplicate SKU lines so stock checks use aggregated quantity. */
   private mergeOrderItems(items: OrderItemDto[]): OrderItemDto[] {
     const map = new Map<number, OrderItemDto>();
@@ -214,6 +320,72 @@ export class OrderService implements OnModuleInit {
     }
 
     return [...map.values()];
+  }
+
+  private resolvePayExpiresAt(order: Order) {
+    if (order.payExpiresAt) {
+      return new Date(order.payExpiresAt);
+    }
+    return new Date(new Date(order.createdAt).getTime() + PENDING_ORDER_PAY_TIMEOUT_MS);
+  }
+
+  private isPayExpired(order: Order) {
+    return this.resolvePayExpiresAt(order).getTime() <= Date.now();
+  }
+
+  private async expirePendingOrders(userId?: number) {
+    const qb = this.orderRepository
+      .createQueryBuilder('order')
+      .leftJoinAndSelect('order.items', 'items')
+      .where('order.status = :status', { status: OrderStatus.PENDING });
+
+    if (userId) {
+      qb.andWhere('order.user_id = :userId', { userId });
+    }
+
+    const pendingOrders = await qb.getMany();
+    const expiredOrders = pendingOrders.filter((order) => this.isPayExpired(order));
+
+    for (const order of expiredOrders) {
+      try {
+        await this.cancelPendingOrderInternal(order);
+      } catch (error) {
+        this.logger.warn(`Failed to expire pending order ${order.orderNo}: ${String(error)}`);
+      }
+    }
+  }
+
+  private async cancelPendingOrderInternal(order: Order) {
+    if (order.status !== OrderStatus.PENDING) return;
+
+    await this.dataSource.transaction(async (manager) => {
+      const items = order.items?.length
+        ? order.items
+        : await manager.find(OrderItem, { where: { orderId: order.id } });
+
+      for (const item of items) {
+        if (!item.productSkuId) continue;
+        await this.productService.restoreStock(item.productSkuId, item.quantity, manager);
+        await this.productService.decrementSalesCount(item.productId, item.quantity, manager);
+      }
+
+      await manager.update(Order, order.id, {
+        status: OrderStatus.CANCELLED,
+        payExpiresAt: null,
+      });
+    });
+  }
+
+  private async backfillPayExpiresAt() {
+    const pendingOrders = await this.orderRepository.find({
+      where: { status: OrderStatus.PENDING, payExpiresAt: IsNull() },
+    });
+
+    for (const order of pendingOrders) {
+      await this.orderRepository.update(order.id, {
+        payExpiresAt: buildPendingPayExpiresAt(order.createdAt),
+      });
+    }
   }
 
   private async backfillOrderNumbers() {

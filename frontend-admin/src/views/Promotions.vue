@@ -371,11 +371,6 @@ function toggleProduct(id: number) {
   form.productIds.push(id)
 }
 
-function productLabel(id: number) {
-  const p = productOptions.value.find((item) => item.id === id)
-  return p ? `${p.title.zh} (${p.spuCode})` : `#${id}`
-}
-
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN')
 }

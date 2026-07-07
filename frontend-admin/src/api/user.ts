@@ -1,5 +1,6 @@
 import { del, get, post } from './request'
 import type { AdminPermission } from '@/constants/permissions'
+import type { BatchDeleteResult } from '@/types/batch-delete'
 
 export type UserStatus = 'active' | 'frozen'
 
@@ -63,3 +64,6 @@ export const updateUserStatus = (data: { userId: number; status: UserStatus }) =
   post<{ userId: number; status: UserStatus }>('/users/admin/update-status', data)
 
 export const deleteUser = (userId: number) => del<{ userId: number; account: string }>(`/users/${userId}`)
+
+export const batchDeleteUsers = (ids: number[]) =>
+  post<BatchDeleteResult>('/users/batch-delete', { ids })

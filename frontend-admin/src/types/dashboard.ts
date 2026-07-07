@@ -1,6 +1,6 @@
 import type { LocalizedTitle } from '@/types/product'
 
-export type HotProductsPeriod = 'day' | 'month' | 'year'
+export type HotProductsPeriod = 'day' | 'month' | 'year' | 'all'
 
 export type HotProductsSortBy = 'quantity' | 'revenue'
 
@@ -35,4 +35,24 @@ export interface DashboardOverview {
   totalSales: number
   pendingShipmentCount: number
   date: string
+}
+
+export interface DashboardOrderTrendDay {
+  date: string
+  label: string
+  orderUserCount: number
+  orderCount: number
+  orderAmount: number
+}
+
+export interface DashboardOrderTrends {
+  startDate: string
+  endDate: string
+  label?: string
+  days: DashboardOrderTrendDay[]
+}
+
+export interface DashboardOrderTrendsQuery {
+  startDate?: string
+  endDate?: string
 }

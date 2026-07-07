@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { isAdminRole, isSuperAdmin, STAFF_ROLES } from '../common/constants/user-roles';
+import { runBatchDelete } from '../common/utils/batch-delete.util';
 import {
   AdminPermission,
   normalizePermissions,
@@ -69,12 +70,27 @@ export class UserService {
       throw new BadRequestException('不能直接创建管理员账户');
     }
 
+    return this.saveNewUser(dto);
+  }
+
+  async createInitialAdmin(dto: CreateUserDto): Promise<Omit<User, 'password'>> {
+    if (!dto.email) {
+      throw new BadRequestException('Email is required for initial admin');
+    }
+    const emailExists = await this.userRepository.findOne({ where: { email: dto.email } });
+    if (emailExists) {
+      throw new ConflictException('该邮箱已被注册');
+    }
+    return this.saveNewUser({ ...dto, role: UserRole.ADMIN });
+  }
+
+  private async saveNewUser(dto: CreateUserDto): Promise<Omit<User, 'password'>> {
     const user = this.userRepository.create({
       email: dto.email ?? null,
       phone: dto.phone ?? null,
       region: dto.region ?? null,
       name: dto.name,
-      role: dto.role,
+      role: dto.role ?? UserRole.CUSTOMER,
       password: await bcrypt.hash(dto.password, 10),
     });
     const saved = await this.userRepository.save(user);
@@ -278,6 +294,10 @@ export class UserService {
     await this.redisService.deleteToken(userId);
     await this.userRepository.softDelete(userId);
     return { userId, account: user.email || user.phone || '' };
+  }
+
+  adminBatchDelete(ids: number[], actorRole: UserRole) {
+    return runBatchDelete(ids, (id) => this.adminDelete(id, actorRole));
   }
 
   private async findManagedUserForAdmin(userId: number, actorRole: UserRole): Promise<User> {

@@ -1,23 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getOrders, type Order } from '@/api/order'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { getOrders, payOrder, cancelOrder, deleteOrder, type Order } from '@/api/order'
+import OrderStatusBadge from '@/components/OrderStatusBadge.vue'
+import PaymentMethodPicker from '@/components/PaymentMethodPicker.vue'
+import PendingPayCountdown from '@/components/PendingPayCountdown.vue'
 import { useAppStore } from '@/stores/app'
+import { orderStatusClass, orderStatusLabel, canUserDeleteOrder } from '@/utils/order-status'
+import { DEFAULT_PAYMENT_METHOD, paymentMethodLabel, type PaymentMethod } from '@/utils/payment-method'
 
 const router = useRouter()
 const appStore = useAppStore()
 
 const loading = ref(false)
+const payingOrderNo = ref('')
+const deletingOrderNo = ref('')
+const cancellingOrderNo = ref('')
+const payDialogVisible = ref(false)
+const payTarget = ref<Order | null>(null)
+const paymentMethod = ref<PaymentMethod>(DEFAULT_PAYMENT_METHOD)
 const orders = ref<Order[]>([])
 const statusFilter = ref('all')
-
-const statusMap: Record<string, string> = {
-  pending: '待支付',
-  paid: '已支付',
-  shipped: '已发货',
-  completed: '已完成',
-  cancelled: '已取消',
-}
 
 const statusOptions = [
   { label: '全部', value: 'all' },
@@ -31,6 +35,14 @@ const statusOptions = [
 const filteredOrders = computed(() => {
   if (statusFilter.value === 'all') return orders.value
   return orders.value.filter((order) => order.status === statusFilter.value)
+})
+
+const statusCounts = computed(() => {
+  const counts: Record<string, number> = { all: orders.value.length }
+  for (const order of orders.value) {
+    counts[order.status] = (counts[order.status] || 0) + 1
+  }
+  return counts
 })
 
 function productImage(order: Order) {
@@ -56,6 +68,95 @@ async function loadOrders() {
   }
 }
 
+async function handlePay(order: Order, event?: Event) {
+  event?.stopPropagation()
+  payTarget.value = order
+  paymentMethod.value = DEFAULT_PAYMENT_METHOD
+  payDialogVisible.value = true
+}
+
+async function confirmPay() {
+  if (!payTarget.value) return
+
+  payingOrderNo.value = payTarget.value.orderNo
+  try {
+    const updated = await payOrder(payTarget.value.orderNo, paymentMethod.value)
+    const index = orders.value.findIndex((item) => item.orderNo === payTarget.value?.orderNo)
+    if (index >= 0) {
+      orders.value[index] = updated
+    }
+    payDialogVisible.value = false
+    payTarget.value = null
+    ElMessage.success(`已使用${paymentMethodLabel(updated.paymentMethod)}支付成功`)
+  } finally {
+    payingOrderNo.value = ''
+  }
+}
+
+async function handleCancel(order: Order, event?: Event) {
+  event?.stopPropagation()
+
+  try {
+    await ElMessageBox.confirm(
+      `确定取消待支付订单 ${order.orderNo}？取消后库存将释放。`,
+      '取消订单',
+      {
+        type: 'warning',
+        confirmButtonText: '取消订单',
+        cancelButtonText: '再想想',
+      },
+    )
+  } catch {
+    return
+  }
+
+  cancellingOrderNo.value = order.orderNo
+  try {
+    const updated = await cancelOrder(order.orderNo)
+    const index = orders.value.findIndex((item) => item.orderNo === order.orderNo)
+    if (index >= 0) {
+      orders.value[index] = updated
+    }
+    ElMessage.success('订单已取消')
+  } finally {
+    cancellingOrderNo.value = ''
+  }
+}
+
+async function handlePendingExpired(orderNo: string) {
+  await loadOrders()
+  if (orders.value.every((item) => item.orderNo !== orderNo || item.status !== 'pending')) {
+    ElMessage.warning('订单支付超时，已自动取消')
+  }
+}
+
+async function handleDelete(order: Order, event?: Event) {
+  event?.stopPropagation()
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除${orderStatusLabel(order.status)}订单 ${order.orderNo}？删除后无法恢复。`,
+      '删除订单',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  deletingOrderNo.value = order.orderNo
+  try {
+    await deleteOrder(order.orderNo)
+    orders.value = orders.value.filter((item) => item.orderNo !== order.orderNo)
+    ElMessage.success('订单已删除')
+  } finally {
+    deletingOrderNo.value = ''
+  }
+}
+
 onMounted(loadOrders)
 </script>
 
@@ -70,16 +171,27 @@ onMounted(loadOrders)
     </div>
 
     <div class="filter-bar">
-      <el-radio-group v-model="statusFilter" size="small" class="status-filter">
-        <el-radio-button v-for="item in statusOptions" :key="item.value" :value="item.value">
-          {{ item.label }}
-        </el-radio-button>
-      </el-radio-group>
+      <div class="filter-tabs">
+        <button
+          v-for="item in statusOptions"
+          :key="item.value"
+          type="button"
+          class="filter-tab"
+          :class="[
+            statusFilter === item.value ? 'is-active' : '',
+            item.value !== 'all' ? orderStatusClass(item.value) : 'status-all',
+          ]"
+          @click="statusFilter = item.value"
+        >
+          <span class="filter-label">{{ item.label }}</span>
+          <span v-if="statusCounts[item.value]" class="filter-count">{{ statusCounts[item.value] }}</span>
+        </button>
+      </div>
     </div>
 
     <div v-loading="loading" class="orders-list">
       <div v-if="!filteredOrders.length && !loading" class="empty-state">
-        <p>{{ statusFilter === 'all' ? '暂无订单' : '该状态下暂无订单' }}</p>
+        <p>{{ statusFilter === 'all' ? '暂无订单' : `暂无${orderStatusLabel(statusFilter)}订单` }}</p>
         <el-button type="primary" @click="router.push('/')">去购物</el-button>
       </div>
 
@@ -87,6 +199,7 @@ onMounted(loadOrders)
         v-for="order in filteredOrders"
         :key="order.orderNo"
         class="order-card"
+        :class="orderStatusClass(order.status)"
         @click="router.push(`/orders/${order.orderNo}`)"
       >
         <div class="order-header">
@@ -94,9 +207,7 @@ onMounted(loadOrders)
             <span class="order-no">{{ order.orderNo }}</span>
             <span class="order-time">{{ new Date(order.createdAt).toLocaleString() }}</span>
           </div>
-          <el-tag size="small" :type="order.status === 'cancelled' ? 'info' : undefined">
-            {{ statusMap[order.status] || order.status }}
-          </el-tag>
+          <OrderStatusBadge :status="order.status" size="sm" />
         </div>
 
         <div class="order-body">
@@ -104,6 +215,12 @@ onMounted(loadOrders)
             <img v-if="productImage(order)" :src="productImage(order)" alt="" loading="lazy" />
           </div>
           <div class="order-info">
+            <PendingPayCountdown
+              v-if="order.status === 'pending'"
+              :order="order"
+              compact
+              @expired="handlePendingExpired(order.orderNo)"
+            />
             <p class="order-summary">{{ itemSummary(order) }}</p>
             <div class="order-items-preview">
               <span v-for="item in order.items.slice(0, 3)" :key="item.id" class="item-chip">
@@ -118,11 +235,54 @@ onMounted(loadOrders)
           </div>
         </div>
 
-        <div class="order-footer">
-          <span class="view-detail">查看详情 →</span>
+        <div class="order-footer" @click.stop>
+          <div class="order-actions">
+            <el-button
+              v-if="order.status === 'pending'"
+              type="primary"
+              size="small"
+              :loading="payingOrderNo === order.orderNo"
+              @click="handlePay(order, $event)"
+            >
+              立即支付
+            </el-button>
+            <el-button
+              v-if="order.status === 'pending'"
+              link
+              type="danger"
+              :loading="cancellingOrderNo === order.orderNo"
+              @click="handleCancel(order, $event)"
+            >
+              取消订单
+            </el-button>
+            <el-button
+              v-if="canUserDeleteOrder(order.status)"
+              link
+              type="danger"
+              :loading="deletingOrderNo === order.orderNo"
+              @click="handleDelete(order, $event)"
+            >
+              删除订单
+            </el-button>
+            <el-button link @click="router.push(`/orders/${order.orderNo}`)">查看详情 →</el-button>
+          </div>
         </div>
       </div>
     </div>
+
+    <el-dialog v-model="payDialogVisible" title="选择支付方式" width="520px" destroy-on-close>
+      <template v-if="payTarget">
+        <p class="pay-dialog-summary">
+          订单 {{ payTarget.orderNo }} · 应付
+          <strong>{{ appStore.formatPrice(Number(payTarget.totalAmount)) }}</strong>
+        </p>
+        <PaymentMethodPicker v-model="paymentMethod" />
+      </template>
+      <template #footer>
+        <el-button @click="payDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="!!payingOrderNo" @click="confirmPay">确认支付</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -159,16 +319,93 @@ onMounted(loadOrders)
 
 .filter-bar {
   margin-bottom: 20px;
-  padding: 16px;
-  border: 1px solid var(--cb-border);
+  padding: 14px;
+  border: 1px solid rgba(201, 169, 98, 0.18);
   border-radius: var(--cb-radius-lg);
-  background: var(--cb-surface);
+  background: linear-gradient(145deg, rgba(26, 20, 16, 0.88), rgba(18, 14, 11, 0.92));
 }
 
-.status-filter {
+.filter-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.filter-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(201, 169, 98, 0.16);
+  background: rgba(18, 14, 11, 0.65);
+  color: var(--cb-text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.filter-tab:hover {
+  color: var(--cb-gold-light);
+  border-color: rgba(201, 169, 98, 0.32);
+  background: rgba(201, 169, 98, 0.08);
+}
+
+.filter-tab.is-active.status-all {
+  color: #16110e;
+  background: linear-gradient(135deg, #e8d5a3, #c9a962 58%, #a89060);
+  border-color: rgba(232, 213, 163, 0.45);
+  box-shadow: 0 4px 14px rgba(201, 169, 98, 0.22);
+}
+
+.filter-tab.is-active.status-pending {
+  color: #f0d78a;
+  background: rgba(212, 175, 55, 0.18);
+  border-color: rgba(212, 175, 55, 0.42);
+}
+
+.filter-tab.is-active.status-paid {
+  color: #16110e;
+  background: linear-gradient(135deg, #e8d5a3, #c9a962 58%, #a89060);
+  border-color: rgba(232, 213, 163, 0.45);
+}
+
+.filter-tab.is-active.status-shipped {
+  color: #dce8ff;
+  background: rgba(96, 132, 188, 0.22);
+  border-color: rgba(130, 164, 214, 0.38);
+}
+
+.filter-tab.is-active.status-completed {
+  color: #b8e0b8;
+  background: rgba(88, 148, 88, 0.22);
+  border-color: rgba(120, 168, 120, 0.38);
+}
+
+.filter-tab.is-active.status-cancelled {
+  color: #b8b5ad;
+  background: rgba(120, 118, 112, 0.2);
+  border-color: rgba(120, 118, 112, 0.32);
+}
+
+.filter-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.filter-tab.is-active.status-all .filter-count,
+.filter-tab.is-active.status-paid .filter-count {
+  background: rgba(22, 17, 14, 0.18);
+  color: inherit;
 }
 
 .orders-list {
@@ -186,13 +423,53 @@ onMounted(loadOrders)
 }
 
 .order-card {
+  position: relative;
   border: 1px solid var(--cb-border);
   border-radius: var(--cb-radius-lg);
-  padding: 18px 20px;
+  padding: 18px 20px 18px 23px;
   margin-bottom: 14px;
   background: var(--cb-surface);
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.order-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--cb-accent);
+  opacity: 0.35;
+}
+
+.order-card.status-pending::before {
+  background: #d4af37;
+  opacity: 0.9;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.45);
+}
+
+.order-card.status-paid::before {
+  background: linear-gradient(180deg, #e8d5a3, #c9a962);
+  opacity: 1;
+}
+
+.order-card.status-shipped::before {
+  background: #8eb0e8;
+  opacity: 0.95;
+}
+
+.order-card.status-completed::before {
+  background: #7cb87c;
+  opacity: 0.95;
+}
+
+.order-card.status-cancelled::before {
+  background: #7a7872;
+  opacity: 0.55;
 }
 
 .order-card:hover {
@@ -250,6 +527,9 @@ onMounted(loadOrders)
 .order-info {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .order-summary {
@@ -303,12 +583,26 @@ onMounted(loadOrders)
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px dashed var(--cb-border);
-  text-align: right;
 }
 
-.view-detail {
-  font-size: 13px;
+.order-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pay-dialog-summary {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--cb-text-dim);
+}
+
+.pay-dialog-summary strong {
   color: var(--cb-accent);
+  font-family: var(--cb-font-display);
+  font-size: 18px;
 }
 
 @media (max-width: 768px) {
@@ -324,8 +618,9 @@ onMounted(loadOrders)
     margin-top: 4px;
   }
 
-  .status-filter :deep(.el-radio-button__inner) {
-    padding: 8px 10px;
+  .filter-tab {
+    padding: 7px 12px;
+    font-size: 12px;
   }
 }
 </style>

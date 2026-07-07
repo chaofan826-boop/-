@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { runBatchDelete } from '../common/utils/batch-delete.util';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { QueryBannerDto } from './dto/query-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
@@ -102,5 +103,9 @@ export class BannerService {
     await this.findOne(id);
     await this.bannerRepository.softDelete(id);
     return null;
+  }
+
+  removeMany(ids: number[]) {
+    return runBatchDelete(ids, (id) => this.remove(id));
   }
 }

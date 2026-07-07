@@ -14,6 +14,7 @@ const router = createRouter({
           name: 'CategoryProducts',
           component: () => import('@/views/CategoryProducts.vue'),
         },
+        { path: 'search', name: 'SearchResults', component: () => import('@/views/SearchResults.vue') },
         { path: 'products/:id', name: 'ProductDetail', component: () => import('@/views/ProductDetail.vue') },
         { path: 'cart', name: 'Cart', component: () => import('@/views/Cart.vue') },
         { path: 'checkout', name: 'Checkout', component: () => import('@/views/Checkout.vue'), meta: { auth: true } },

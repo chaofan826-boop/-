@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import {
+  batchDeleteUsers,
   createSubAdmin,
   deleteUser,
   getSubAdmins,
@@ -11,6 +12,11 @@ import {
   updateUserStatus,
   type AdminUser,
 } from '@/api/user'
+import {
+  confirmBatchDelete,
+  showBatchDeleteResult,
+  useTableSelection,
+} from '@/composables/useTableSelection'
 import {
   ADMIN_PERMISSIONS,
   ADMIN_PERMISSION_LABELS,
@@ -21,6 +27,8 @@ import {
 import { roleLabel, roleTagType } from '@/constants/roles'
 
 const loading = ref(false)
+const tableRef = ref<{ clearSelection: () => void }>()
+const batchDeleting = ref(false)
 const createLoading = ref(false)
 const resetLoading = ref(false)
 const permissionLoading = ref(false)
@@ -28,6 +36,12 @@ const subAdmins = ref<AdminUser[]>([])
 const createVisible = ref(false)
 const detailVisible = ref(false)
 const detailUser = ref<AdminUser | null>(null)
+const {
+  selectedIds,
+  hasSelection,
+  handleSelectionChange,
+  clearSelection,
+} = useTableSelection<AdminUser>()
 
 const permissionOptions = ADMIN_PERMISSIONS.map((value) => ({
   value,
@@ -168,6 +182,30 @@ async function handleDelete(row: AdminUser) {
   await loadSubAdmins()
 }
 
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) return
+
+  try {
+    await confirmBatchDelete(selectedIds.value.length, '位子管理员')
+  } catch {
+    return
+  }
+
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteUsers(selectedIds.value)
+    showBatchDeleteResult(result, '位子管理员')
+    if (detailUser.value && selectedIds.value.includes(detailUser.value.id)) {
+      detailVisible.value = false
+    }
+    tableRef.value?.clearSelection()
+    clearSelection()
+    await loadSubAdmins()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 async function handleResetPassword() {
   if (!detailUser.value) return
   const password = resetForm.newPassword.trim()
@@ -254,13 +292,30 @@ onUnmounted(stopPolling)
         <p class="page-desc">共 {{ displayTotal }} 位子管理员，可分配后台管理权限，但不能创建同级管理员。</p>
       </div>
       <div class="toolbar-actions">
+        <el-button
+          type="danger"
+          plain
+          :disabled="!hasSelection"
+          :loading="batchDeleting"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ hasSelection ? ` (${selectedIds.length})` : '' }}
+        </el-button>
         <el-button :loading="loading" @click="loadSubAdmins">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreateDialog">创建子管理员</el-button>
       </div>
     </div>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="subAdmins" stripe>
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="subAdmins"
+        row-key="id"
+        stripe
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="管理员" min-width="180">
           <template #default="{ row }">

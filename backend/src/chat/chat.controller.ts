@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { AdminRoles } from '../auth/admin-roles.decorator';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -7,6 +7,7 @@ import { isAdminRole } from '../common/constants/user-roles';
 import { UserRole } from '../user/entities/user.entity';
 import { ChatService } from './chat.service';
 import { CreateQuickReplyDto } from './dto/create-quick-reply.dto';
+import { QueryChatConversationsDto, QueryChatCustomersDto } from './dto/query-chat.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateQuickReplyDto } from './dto/update-quick-reply.dto';
 
@@ -34,8 +35,24 @@ export class ChatController {
   @UseGuards(RolesGuard)
   @AdminRoles()
   @RequirePermissions('chat')
-  listConversations() {
-    return this.chatService.listConversations();
+  listConversations(@Query() query: QueryChatConversationsDto) {
+    return this.chatService.listConversations(query.keyword);
+  }
+
+  @Get('customers/search')
+  @UseGuards(RolesGuard)
+  @AdminRoles()
+  @RequirePermissions('chat')
+  searchCustomers(@Query() query: QueryChatCustomersDto) {
+    return this.chatService.searchCustomers(query.keyword);
+  }
+
+  @Get('conversations/customer/:customerId')
+  @UseGuards(RolesGuard)
+  @AdminRoles()
+  @RequirePermissions('chat')
+  getConversationByCustomer(@Param('customerId', ParseIntPipe) customerId: number) {
+    return this.chatService.getOrCreateConversationForCustomer(customerId);
   }
 
   @Get('unread-count')
@@ -69,6 +86,19 @@ export class ChatController {
   ) {
     this.assertChatAccess(req.user);
     return this.chatService.sendMessage(id, req.user, dto);
+  }
+
+  @Post('conversations/:conversationId/messages/:messageId/recall')
+  recallMessage(
+    @Request()
+    req: {
+      user: { id: number; role: UserRole; permissions?: string[] | null };
+    },
+    @Param('conversationId', ParseIntPipe) conversationId: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+  ) {
+    this.assertChatAccess(req.user);
+    return this.chatService.recallMessage(conversationId, messageId, req.user);
   }
 
   @Get('quick-replies')

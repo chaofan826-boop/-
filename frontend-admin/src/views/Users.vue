@@ -1,16 +1,44 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { getUsers, resetUserPassword, updateUserStatus, deleteUser, type AdminUser } from '@/api/user'
+import {
+  batchDeleteUsers,
+  getUsers,
+  resetUserPassword,
+  updateUserStatus,
+  deleteUser,
+  type AdminUser,
+} from '@/api/user'
+import {
+  confirmBatchDelete,
+  showBatchDeleteResult,
+  useTableSelection,
+} from '@/composables/useTableSelection'
+import { hasPermission } from '@/constants/permissions'
 import { formatPhoneDisplay, regionLabel } from '@/constants/regions'
 import { roleLabel, roleTagType } from '@/constants/roles'
+import { useUserStore } from '@/stores/user'
+
+const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/
+
+const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(false)
+const tableRef = ref<{ clearSelection: () => void }>()
+const batchDeleting = ref(false)
 const users = ref<AdminUser[]>([])
 const detailVisible = ref(false)
 const detailUser = ref<AdminUser | null>(null)
 const resetLoading = ref(false)
+const {
+  selectedIds,
+  hasSelection,
+  handleSelectionChange,
+  clearSelection,
+} = useTableSelection<AdminUser>()
 
 const resetForm = reactive({
   newPassword: '',
@@ -131,17 +159,50 @@ async function handleDelete(row: AdminUser) {
   await loadUsers()
 }
 
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) return
+
+  try {
+    await confirmBatchDelete(selectedIds.value.length, '位用户')
+  } catch {
+    return
+  }
+
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteUsers(selectedIds.value)
+    showBatchDeleteResult(result, '位用户')
+    if (detailUser.value && selectedIds.value.includes(detailUser.value.id)) {
+      detailVisible.value = false
+    }
+    tableRef.value?.clearSelection()
+    clearSelection()
+    await loadUsers()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 function openDetail(row: AdminUser) {
   detailUser.value = row
   resetForm.newPassword = ''
   detailVisible.value = true
 }
 
+function openChatSession(row: AdminUser) {
+  if (!hasPermission(userStore.user, 'chat')) {
+    ElMessage.warning('当前账号没有客服消息权限')
+    return
+  }
+  detailVisible.value = false
+  router.push({ path: '/chat', query: { customerId: String(row.id) } })
+}
+
 async function handleResetPassword() {
   if (!detailUser.value) return
   const password = resetForm.newPassword.trim()
-  if (password.length < 6) {
-    ElMessage.warning('新密码至少 6 位')
+  if (!PASSWORD_PATTERN.test(password)) {
+    ElMessage.warning('新密码至少 6 位，须同时包含字母和数字')
     return
   }
 
@@ -201,7 +262,18 @@ onUnmounted(stopPolling)
         <h2 class="page-title">用户管理</h2>
         <p class="user-count">共 {{ displayTotal }} 位用户</p>
       </div>
-      <el-button :loading="loading" @click="loadUsers">刷新</el-button>
+      <div class="toolbar-actions">
+        <el-button
+          type="danger"
+          plain
+          :disabled="!hasSelection"
+          :loading="batchDeleting"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ hasSelection ? ` (${selectedIds.length})` : '' }}
+        </el-button>
+        <el-button :loading="loading" @click="loadUsers">刷新</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" class="filter-card">
@@ -242,7 +314,15 @@ onUnmounted(stopPolling)
     </el-card>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="displayedUsers" stripe>
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="displayedUsers"
+        row-key="id"
+        stripe
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="用户" min-width="160">
           <template #default="{ row }">
@@ -291,9 +371,10 @@ onUnmounted(stopPolling)
             {{ new Date(row.createdAt).toLocaleString() }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button link type="success" @click="openChatSession(row)">会话</el-button>
             <el-button
               link
               :type="row.status === 'frozen' ? 'success' : 'warning'"
@@ -353,6 +434,7 @@ onUnmounted(stopPolling)
         </el-descriptions>
 
         <div class="action-block">
+          <el-button type="primary" plain @click="openChatSession(detailUser)">发起会话</el-button>
           <el-button
             :type="detailUser.status === 'frozen' ? 'success' : 'warning'"
             plain
@@ -365,13 +447,13 @@ onUnmounted(stopPolling)
 
         <div class="reset-block">
           <p class="reset-title">重置密码</p>
-          <p class="reset-hint">重置后可查看一次新密码，并强制用户重新登录。</p>
+          <p class="reset-hint">重置后可查看一次新密码，并强制用户重新登录。密码至少 6 位，须同时包含字母和数字。</p>
           <div class="reset-row">
             <el-input
               v-model="resetForm.newPassword"
               type="password"
               show-password
-              placeholder="输入新密码（至少 6 位）"
+              placeholder="至少 6 位，须含字母和数字"
             />
             <el-button type="primary" :loading="resetLoading" @click="handleResetPassword">
               重置
@@ -416,6 +498,13 @@ onUnmounted(stopPolling)
   align-items: flex-end;
   justify-content: space-between;
   margin-bottom: 20px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .user-cell {

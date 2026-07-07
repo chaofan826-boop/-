@@ -1,4 +1,4 @@
-import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios'
+import axios, { type AxiosHeaders, type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 import { getActivePinia } from 'pinia'
 import router from '@/router'
@@ -29,8 +29,8 @@ function attachAuthHeader(config: AxiosRequestConfig, token: string) {
   if (!config.headers) {
     config.headers = {}
   }
-  if (typeof (config.headers as axios.AxiosHeaders).set === 'function') {
-    ;(config.headers as axios.AxiosHeaders).set('Authorization', value)
+  if (typeof (config.headers as AxiosHeaders).set === 'function') {
+    ;(config.headers as AxiosHeaders).set('Authorization', value)
   } else {
     ;(config.headers as Record<string, string>).Authorization = value
   }

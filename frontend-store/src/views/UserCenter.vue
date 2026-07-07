@@ -6,9 +6,10 @@ import { useRouter } from 'vue-router'
 
 import { ElMessage, ElMessageBox, type UploadRequestOptions } from 'element-plus'
 
-import { Camera, Clock, List, SwitchButton } from '@element-plus/icons-vue'
+import { Camera, Clock, List, Location, SwitchButton } from '@element-plus/icons-vue'
 
 import { changePassword } from '@/api/auth'
+import ShippingAddressManager from '@/components/ShippingAddressManager.vue'
 
 import { uploadAvatar } from '@/api/upload'
 
@@ -88,7 +89,7 @@ async function handleAvatarUpload(options: UploadRequestOptions) {
 
   } catch (err) {
 
-    options.onError?.(err as Error)
+    options.onError?.(err as never)
 
   } finally {
 
@@ -209,6 +210,10 @@ onMounted(async () => {
 
 })
 
+function scrollToAddresses() {
+  document.getElementById('shipping-addresses')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 </script>
 
 
@@ -258,6 +263,16 @@ onMounted(async () => {
             <el-icon><Clock /></el-icon>
 
             <span>浏览记录</span>
+
+          </button>
+
+
+
+          <button type="button" class="orders-link" @click="scrollToAddresses">
+
+            <el-icon><Location /></el-icon>
+
+            <span>收货地址</span>
 
           </button>
 
@@ -450,6 +465,10 @@ onMounted(async () => {
 
 
         </el-card>
+
+        <div id="shipping-addresses">
+          <ShippingAddressManager />
+        </div>
 
       </el-col>
 

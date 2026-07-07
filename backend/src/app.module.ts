@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AddressModule } from './address/address.module';
+import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BannerModule } from './banner/banner.module';
 import { BrowseHistoryModule } from './browse-history/browse-history.module';
@@ -35,8 +37,10 @@ import { UserModule } from './user/user.module';
       }),
     }),
     RedisModule,
+    AuditModule,
     AuthModule,
     UserModule,
+    AddressModule,
     CategoryModule,
     BannerModule,
     BrowseHistoryModule,

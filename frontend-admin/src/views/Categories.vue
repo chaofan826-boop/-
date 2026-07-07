@@ -4,11 +4,17 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import {
+  batchDeleteCategories,
   createCategory,
   deleteCategory,
   getCategories,
   updateCategory,
 } from '@/api/category'
+import {
+  confirmBatchDelete,
+  showBatchDeleteResult,
+  useTableSelection,
+} from '@/composables/useTableSelection'
 import { useUserStore } from '@/stores/user'
 import type { Category, CategoryStatus } from '@/types/category'
 
@@ -16,11 +22,19 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const loading = ref(false)
+const tableRef = ref<{ clearSelection: () => void }>()
+const batchDeleting = ref(false)
 const categories = ref<Category[]>([])
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增分类')
 const editingId = ref<number | null>(null)
 const submitLoading = ref(false)
+const {
+  selectedIds,
+  hasSelection,
+  handleSelectionChange,
+  clearSelection,
+} = useTableSelection<Category>()
 
 const filterStatus = ref<CategoryStatus | ''>('')
 
@@ -114,6 +128,27 @@ async function handleDelete(row: Category) {
   await loadCategories()
 }
 
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) return
+
+  try {
+    await confirmBatchDelete(selectedIds.value.length, '个分类')
+  } catch {
+    return
+  }
+
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteCategories(selectedIds.value)
+    showBatchDeleteResult(result, '个分类')
+    tableRef.value?.clearSelection()
+    clearSelection()
+    await loadCategories()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 function statusTagType(status: CategoryStatus) {
   return status === 'active' ? 'success' : 'info'
 }
@@ -132,7 +167,18 @@ onMounted(loadCategories)
         <p class="page-tag">商品分类</p>
         <h2 class="page-title">商品分类</h2>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新增分类</el-button>
+      <div class="toolbar-actions">
+        <el-button
+          type="danger"
+          plain
+          :disabled="!hasSelection"
+          :loading="batchDeleting"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ hasSelection ? ` (${selectedIds.length})` : '' }}
+        </el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新增分类</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" class="filter-card">
@@ -153,7 +199,15 @@ onMounted(loadCategories)
     </el-card>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="categories" stripe>
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="categories"
+        row-key="id"
+        stripe
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="code" label="编码" width="140" />
         <el-table-column label="名称" min-width="180">
@@ -230,6 +284,13 @@ onMounted(loadCategories)
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .filter-card {

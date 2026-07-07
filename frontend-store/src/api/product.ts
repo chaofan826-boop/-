@@ -1,5 +1,6 @@
 import type { PaginatedResult } from '@/types/api'
 import type { Category, CategoryQuery, Product, ProductQuery } from '@/types/product'
+import { formatSpecText } from '@/utils/spec'
 import { get } from './request'
 
 export const getProducts = (params?: ProductQuery) =>
@@ -22,8 +23,12 @@ export function getMinPrice(product: Product, currency: string): number {
   return Math.min(...product.skus.map((s) => getSkuPrice(s, currency)))
 }
 
-export function formatSpec(sku: { color?: string | null; size?: string | null }): string {
-  return [sku.color, sku.size].filter(Boolean).join(' / ')
+export function formatSpec(sku: {
+  color?: string | null
+  size?: string | null
+  specValues?: Record<string, string> | null
+}): string {
+  return formatSpecText(sku)
 }
 
 export function formatSalesCount(count: number, locale: 'zh' | 'en' = 'zh') {

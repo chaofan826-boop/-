@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { CategoryService } from '../category/category.service';
+import { runBatchDelete } from '../common/utils/batch-delete.util';
 import { Merchant } from '../merchant/entities/merchant.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
@@ -16,6 +17,7 @@ import { Product, ProductStatus } from './entities/product.entity';
 import { ProductSku, SkuStatus } from './entities/product-sku.entity';
 import { ProductSkuRepository } from './repositories/product-sku.repository';
 import { ProductRepository } from './repositories/product.repository';
+import { normalizeSkuSpecInput, normalizeSpecOptions } from './utils/spec.util';
 
 @Injectable()
 export class ProductService {
@@ -47,6 +49,7 @@ export class ProductService {
         status: dto.status ?? ProductStatus.DRAFT,
         categoryId: dto.categoryId ?? null,
         salesCount: dto.salesCount ?? 0,
+        specOptions: normalizeSpecOptions(dto.specOptions),
       });
 
       const savedProduct = await manager.save(Product, product);
@@ -111,6 +114,9 @@ export class ProductService {
       if (dto.status !== undefined) productPatch.status = dto.status;
       if (dto.categoryId !== undefined) productPatch.categoryId = dto.categoryId;
       if (dto.salesCount !== undefined) productPatch.salesCount = dto.salesCount;
+      if (dto.specOptions !== undefined) {
+        productPatch.specOptions = normalizeSpecOptions(dto.specOptions);
+      }
 
       if (Object.keys(productPatch).length) {
         await manager.update(Product, dto.id, productPatch);
@@ -141,13 +147,16 @@ export class ProductService {
         }
 
         for (const skuDto of dto.skus) {
+          const normalized = normalizeSkuSpecInput(skuDto);
           if (skuDto.id) {
             const stock = toInt(skuDto.stock);
             const skuPatch: Partial<ProductSku> = {
               skuCode: skuDto.skuCode,
-              color: skuDto.color ?? null,
-              size: skuDto.size ?? null,
-              specValues: { color: skuDto.color, size: skuDto.size },
+              color: normalized.color,
+              size: normalized.size,
+              specValues: Object.keys(normalized.specValues).length
+                ? normalized.specValues
+                : null,
               prices: skuDto.prices,
               imageUrl: skuDto.imageUrl ?? null,
               status: skuDto.status,
@@ -185,6 +194,10 @@ export class ProductService {
     return null;
   }
 
+  removeMany(ids: number[]) {
+    return runBatchDelete(ids, (id) => this.remove(id));
+  }
+
   async updateStatus(id: number, status: ProductStatus) {
     if (![ProductStatus.ACTIVE, ProductStatus.INACTIVE].includes(status)) {
       throw new BadRequestException('Status must be active or inactive for shelf toggle');
@@ -206,8 +219,16 @@ export class ProductService {
     return this.findSkuById(skuId);
   }
 
+  async restoreStock(skuId: number, quantity: number, manager?: EntityManager) {
+    await this.skuRepository.incrementStock(skuId, quantity, manager);
+  }
+
   async incrementSalesCount(productId: number, quantity: number, manager?: EntityManager) {
     await this.productRepository.incrementSalesCount(productId, quantity, manager);
+  }
+
+  async decrementSalesCount(productId: number, quantity: number, manager?: EntityManager) {
+    await this.productRepository.decrementSalesCount(productId, quantity, manager);
   }
 
   getSkuPrice(sku: ProductSku, currency = 'USD'): number {

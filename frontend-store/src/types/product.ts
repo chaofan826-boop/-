@@ -3,11 +3,17 @@ export interface LocalizedTitle {
   en: string
 }
 
+export interface ProductSpecOption {
+  name: string
+  values?: string[]
+}
+
 export interface ProductSku {
   id: number
   skuCode: string
   color: string | null
   size: string | null
+  specValues?: Record<string, string> | null
   prices: Record<string, number>
   stock: number
   imageUrl: string | null
@@ -32,6 +38,7 @@ export interface Product {
   categoryId: number | null
   category?: ProductCategory | null
   salesCount: number
+  specOptions?: ProductSpecOption[] | null
   skus: ProductSku[]
   createdAt: string
 }

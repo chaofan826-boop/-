@@ -91,4 +91,9 @@ export class ProductRepository {
     const repo = manager ? manager.getRepository(Product) : this.repository;
     await repo.increment({ id: productId }, 'salesCount', quantity);
   }
+
+  async decrementSalesCount(productId: number, quantity: number, manager?: EntityManager) {
+    const repo = manager ? manager.getRepository(Product) : this.repository;
+    await repo.decrement({ id: productId }, 'salesCount', quantity);
+  }
 }

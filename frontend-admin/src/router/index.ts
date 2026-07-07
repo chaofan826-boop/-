@@ -67,6 +67,12 @@ const router = createRouter({
           component: () => import('@/views/SubAdmins.vue'),
         },
         {
+          path: 'audit-logs',
+          name: 'AuditLogs',
+          meta: { title: '审计日志', superAdminOnly: true },
+          component: () => import('@/views/AuditLogs.vue'),
+        },
+        {
           path: 'chat',
           name: 'Chat',
           meta: { title: '客服消息', permission: 'chat' },

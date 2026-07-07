@@ -2,6 +2,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse 
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 import type { ApiResponse } from '@/types/api'
+import { clearToken, getToken } from '@/utils/token'
 
 const request: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -9,7 +10,7 @@ const request: AxiosInstance = axios.create({
 })
 
 request.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
+  const token = getToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -29,7 +30,7 @@ request.interceptors.response.use(
     const res = error.response?.data as ApiResponse | undefined
     const message = res?.message || error.message || 'Request failed'
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
+      clearToken()
       if (!router.currentRoute.value.meta.public) {
         router.push('/login')
       }

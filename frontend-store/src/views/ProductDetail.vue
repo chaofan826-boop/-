@@ -6,14 +6,22 @@ import { formatSpec, formatSalesCount, getProduct, getSkuPrice } from '@/api/pro
 import { recordBrowseHistory } from '@/api/browse-history'
 import { quoteProductPricing } from '@/api/promotion'
 import type { Product, ProductSku } from '@/types/product'
+import {
+  getSkuSpecValues,
+  getSpecValueOptions,
+  inferSpecOptionsFromSkus,
+  skuMatchesSelectedSpecs,
+} from '@/utils/spec'
 import { useAppStore } from '@/stores/app'
 import { useCartStore } from '@/stores/cart'
+import { useCheckoutStore } from '@/stores/checkout'
 import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const cartStore = useCartStore()
+const checkoutStore = useCheckoutStore()
 const userStore = useUserStore()
 
 const loading = ref(false)
@@ -22,18 +30,14 @@ const selectedSkuId = ref<number | null>(null)
 const quantity = ref(1)
 const activeImage = ref('')
 
-const colors = computed(() => {
-  if (!product.value?.skus) return []
-  return [...new Set(product.value.skus.map((s) => s.color).filter(Boolean))] as string[]
+const selectedSpecs = ref<Record<string, string>>({})
+
+const specOptions = computed(() => {
+  if (!product.value?.skus?.length) return []
+  return inferSpecOptionsFromSkus(product.value.skus, product.value.specOptions)
 })
 
-const sizes = computed(() => {
-  if (!product.value?.skus) return []
-  return [...new Set(product.value.skus.map((s) => s.size).filter(Boolean))] as string[]
-})
-
-const selectedColor = ref<string>('')
-const selectedSize = ref<string>('')
+const specNames = computed(() => specOptions.value.map((option) => option.name))
 
 const pricing = ref<{
   originalPrice: number
@@ -61,12 +65,23 @@ const selectedSku = computed<ProductSku | null>(() => {
   if (selectedSkuId.value) {
     return product.value.skus.find((s) => s.id === selectedSkuId.value) || null
   }
-  return product.value.skus.find(
-    (s) =>
-      (!selectedColor.value || s.color === selectedColor.value) &&
-      (!selectedSize.value || s.size === selectedSize.value),
-  ) || null
+  return (
+    product.value.skus.find((sku) => skuMatchesSelectedSpecs(sku, selectedSpecs.value, specNames.value)) ||
+    null
+  )
 })
+
+function specChoices(specName: string) {
+  if (!product.value?.skus) return []
+  const option = specOptions.value.find((item) => item.name === specName)
+  return getSpecValueOptions(specName, option?.values, product.value.skus)
+}
+
+function isSpecValueAvailable(specName: string, value: string) {
+  if (!product.value?.skus) return false
+  const trial = { ...selectedSpecs.value, [specName]: value }
+  return product.value.skus.some((sku) => skuMatchesSelectedSpecs(sku, trial, specNames.value))
+}
 
 const currentPrice = computed(() => {
   if (!selectedSku.value) return 0
@@ -120,33 +135,37 @@ async function refreshPricing() {
   }
 }
 
-function pickSkuBySpec() {
-  const sku = product.value?.skus.find(
-    (s) =>
-      (!selectedColor.value || s.color === selectedColor.value) &&
-      (!selectedSize.value || s.size === selectedSize.value),
+function pickSkuBySpecs() {
+  const sku = product.value?.skus.find((item) =>
+    skuMatchesSelectedSpecs(item, selectedSpecs.value, specNames.value),
   )
   if (sku) selectedSkuId.value = sku.id
 }
 
-function selectColor(color: string) {
-  selectedColor.value = color
-  pickSkuBySpec()
+function selectSpec(specName: string, value: string) {
+  selectedSpecs.value = {
+    ...selectedSpecs.value,
+    [specName]: value,
+  }
+  pickSkuBySpecs()
 }
 
-function selectSize(size: string) {
-  selectedSize.value = size
-  pickSkuBySpec()
-}
-
-async function addToCart() {
+async function buildSelectedCartItem() {
   if (!product.value || !selectedSku.value) {
     ElMessage.warning('请选择规格')
-    return
+    return null
+  }
+  if (specNames.value.length) {
+    for (const name of specNames.value) {
+      if (!selectedSpecs.value[name]) {
+        ElMessage.warning(`请选择${name}`)
+        return null
+      }
+    }
   }
   if (selectedSku.value.stock < quantity.value) {
     ElMessage.warning('库存不足')
-    return
+    return null
   }
 
   if (!pricing.value) {
@@ -156,7 +175,7 @@ async function addToCart() {
   const originalPrice = pricing.value?.originalPrice ?? getSkuPrice(selectedSku.value, appStore.currency)
   const salePrice = pricing.value?.salePrice ?? originalPrice
 
-  cartStore.addItem({
+  return {
     productId: product.value.id,
     productSkuId: selectedSku.value.id,
     title: appStore.locale === 'zh' ? product.value.title.zh : product.value.title.en,
@@ -167,13 +186,29 @@ async function addToCart() {
     currency: appStore.currency,
     quantity: quantity.value,
     stock: selectedSku.value.stock,
-  })
+  }
+}
+
+async function addToCart() {
+  const item = await buildSelectedCartItem()
+  if (!item) return
+
+  cartStore.addItem(item)
   ElMessage.success('已加入购物车')
 }
 
 async function buyNow() {
-  await addToCart()
-  router.push('/cart')
+  const item = await buildSelectedCartItem()
+  if (!item) return
+
+  checkoutStore.setBuyNowItem(item)
+
+  if (!userStore.token) {
+    router.push({ path: '/login', query: { redirect: '/checkout?mode=buy' } })
+    return
+  }
+
+  router.push('/checkout?mode=buy')
 }
 
 async function loadProduct(id: number) {
@@ -184,8 +219,7 @@ async function loadProduct(id: number) {
     if (product.value.skus?.length) {
       const first = product.value.skus[0]
       selectedSkuId.value = first.id
-      selectedColor.value = first.color || ''
-      selectedSize.value = first.size || ''
+      selectedSpecs.value = getSkuSpecValues(first)
     }
     await refreshPricing()
 
@@ -256,30 +290,23 @@ watch(
             </div>
             <p class="desc">{{ product.description }}</p>
 
-            <div v-if="colors.length" class="spec-group">
-              <label>颜色</label>
+            <div v-for="option in specOptions" :key="option.name" class="spec-group">
+              <label>{{ option.name }}</label>
               <div class="spec-options">
                 <button
-                  v-for="c in colors"
-                  :key="c"
-                  :class="['spec-btn', { active: selectedColor === c }]"
-                  @click="selectColor(c)"
+                  v-for="value in specChoices(option.name)"
+                  :key="`${option.name}-${value}`"
+                  :class="[
+                    'spec-btn',
+                    {
+                      active: selectedSpecs[option.name] === value,
+                      disabled: !isSpecValueAvailable(option.name, value),
+                    },
+                  ]"
+                  :disabled="!isSpecValueAvailable(option.name, value)"
+                  @click="selectSpec(option.name, value)"
                 >
-                  {{ c }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="sizes.length" class="spec-group">
-              <label>尺寸</label>
-              <div class="spec-options">
-                <button
-                  v-for="s in sizes"
-                  :key="s"
-                  :class="['spec-btn', { active: selectedSize === s }]"
-                  @click="selectSize(s)"
-                >
-                  {{ s }}
+                  {{ value }}
                 </button>
               </div>
             </div>
@@ -299,8 +326,8 @@ watch(
             </div>
 
             <div class="actions">
-              <el-button type="primary" size="large" @click="addToCart">加入购物车</el-button>
-              <el-button size="large" @click="buyNow">立即购买</el-button>
+              <el-button type="primary" size="large" @click="buyNow">立即购买</el-button>
+              <el-button size="large" @click="addToCart">加入购物车</el-button>
             </div>
           </div>
         </el-col>
@@ -490,6 +517,12 @@ watch(
   color: var(--cb-neon-cyan);
   background: rgba(201, 169, 98, 0.1);
   box-shadow: var(--cb-glow-cyan);
+}
+
+.spec-btn.disabled,
+.spec-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .stock-info {

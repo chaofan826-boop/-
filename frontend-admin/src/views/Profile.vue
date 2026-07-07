@@ -46,7 +46,7 @@ async function handleAvatarUpload(options: UploadRequestOptions) {
     ElMessage.success('头像上传成功')
     options.onSuccess?.(res)
   } catch (err) {
-    options.onError?.(err as Error)
+    options.onError?.(err as never)
   } finally {
     avatarUploading.value = false
   }

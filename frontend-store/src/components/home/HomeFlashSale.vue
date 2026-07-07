@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { formatSalesCount } from '@/api/product'
 import { useCountdown } from '@/composables/useCountdown'
 import { useAppStore } from '@/stores/app'
+import { resolveProductImage } from '@/utils/product-image'
 import type { FlashSaleSection } from '@/types/home'
 
 const props = defineProps<{
@@ -22,8 +23,8 @@ function productTitle(p: { title: { zh: string; en: string } }) {
   return appStore.locale === 'zh' ? p.title.zh : p.title.en
 }
 
-function productImage(p: { id: number; mainImage: string | null }) {
-  return p.mainImage || `https://picsum.photos/seed/p${p.id}/400/400`
+function productImage(p: { id: number; spuCode?: string; mainImage: string | null }, index = 0) {
+  return resolveProductImage(p, index)
 }
 </script>
 
@@ -48,13 +49,13 @@ function productImage(p: { id: number; mainImage: string | null }) {
 
     <div class="flash-grid">
       <div
-        v-for="item in data.items"
+        v-for="(item, index) in data.items"
         :key="item.product.id"
         class="flash-card"
         @click="router.push(`/products/${item.product.id}`)"
       >
         <div class="flash-img">
-          <img :src="productImage(item.product)" :alt="productTitle(item.product)" loading="lazy" />
+          <img :src="productImage(item.product, index)" :alt="productTitle(item.product)" loading="lazy" />
           <span class="discount-tag">-{{ item.discountPercent }}%</span>
         </div>
         <div class="flash-info">

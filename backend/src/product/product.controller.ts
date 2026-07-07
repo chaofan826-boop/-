@@ -15,6 +15,7 @@ import { AdminRoles } from '../auth/admin-roles.decorator';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { CreateProductDto } from './dto/create-product.dto';
+import { BatchDeleteDto } from '../common/dto/batch-delete.dto';
 import { QueryProductDto } from './dto/query-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -44,6 +45,14 @@ export class ProductController {
   @Post('update')
   update(@Body() dto: UpdateProductDto) {
     return this.productService.update(dto);
+  }
+
+  @UseGuards(RolesGuard)
+  @AdminRoles()
+  @RequirePermissions('products')
+  @Post('batch-delete')
+  batchRemove(@Body() dto: BatchDeleteDto) {
+    return this.productService.removeMany(dto.ids);
   }
 
   @Public()

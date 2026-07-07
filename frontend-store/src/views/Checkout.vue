@@ -1,18 +1,38 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { createOrder } from '@/api/order'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
+import { getShippingAddresses, type ShippingAddress } from '@/api/address'
+import { createOrder, payOrder } from '@/api/order'
+import PaymentMethodPicker from '@/components/PaymentMethodPicker.vue'
 import { useAppStore } from '@/stores/app'
 import { useCartStore } from '@/stores/cart'
+import { useCheckoutStore } from '@/stores/checkout'
+import { DEFAULT_PAYMENT_METHOD, paymentMethodLabel, type PaymentMethod } from '@/utils/payment-method'
+import { formatShippingAddress } from '@/utils/shipping-address'
 
+const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const cartStore = useCartStore()
-const loading = ref(false)
+const checkoutStore = useCheckoutStore()
 
-const checkoutItems = computed(() => cartStore.selectedItems)
-const checkoutTotal = computed(() => cartStore.selectedTotal)
+const loading = ref(false)
+const addressLoading = ref(false)
+const addresses = ref<ShippingAddress[]>([])
+const selectedAddressId = ref<number | 'manual' | null>(null)
+const paymentMethod = ref<PaymentMethod>(DEFAULT_PAYMENT_METHOD)
+
+const isBuyNowMode = computed(() => route.query.mode === 'buy' && !!checkoutStore.buyNowItem)
+
+const checkoutItems = computed(() =>
+  isBuyNowMode.value && checkoutStore.buyNowItem ? [checkoutStore.buyNowItem] : cartStore.selectedItems,
+)
+
+const checkoutTotal = computed(() =>
+  checkoutItems.value.reduce((sum, item) => sum + item.price * item.quantity, 0),
+)
 
 const form = reactive({
   receiverName: '',
@@ -20,22 +40,54 @@ const form = reactive({
   receiverAddress: '',
 })
 
+function applyAddress(address: ShippingAddress) {
+  form.receiverName = address.receiverName
+  form.receiverPhone = address.receiverPhone
+  form.receiverAddress = address.detailAddress
+}
+
+function selectAddress(id: number) {
+  selectedAddressId.value = id
+  const address = addresses.value.find((item) => item.id === id)
+  if (address) applyAddress(address)
+}
+
+function selectManual() {
+  selectedAddressId.value = 'manual'
+}
+
+async function loadAddresses() {
+  addressLoading.value = true
+  try {
+    addresses.value = await getShippingAddresses()
+    const defaultAddress = addresses.value.find((item) => item.isDefault) || addresses.value[0]
+    if (defaultAddress) {
+      selectAddress(defaultAddress.id)
+    } else {
+      selectedAddressId.value = 'manual'
+    }
+  } finally {
+    addressLoading.value = false
+  }
+}
+
 async function handleSubmit() {
   if (!form.receiverName || !form.receiverPhone || !form.receiverAddress) {
     ElMessage.warning('请填写完整收货信息')
     return
   }
   if (!checkoutItems.value.length) {
-    ElMessage.warning('请先选择要结算的商品')
-    router.push('/cart')
+    ElMessage.warning(isBuyNowMode.value ? '购买商品已失效，请重新选择' : '请先选择要结算的商品')
+    router.push(isBuyNowMode.value ? '/' : '/cart')
     return
   }
 
-  const shippingAddress = `${form.receiverName} | ${form.receiverPhone} | ${form.receiverAddress}`
+  const shippingAddress = formatShippingAddress(form.receiverName, form.receiverPhone, form.receiverAddress)
+  const totalLabel = appStore.formatPrice(checkoutTotal.value)
 
   loading.value = true
   try {
-    await createOrder({
+    const order = await createOrder({
       shippingAddress,
       items: checkoutItems.value.map((i) => ({
         productSkuId: i.productSkuId,
@@ -43,32 +95,119 @@ async function handleSubmit() {
         currency: i.currency,
       })),
     })
-    cartStore.removeSelectedItems()
-    ElMessage.success('下单成功！')
-    router.push('/orders')
+
+    if (isBuyNowMode.value) {
+      checkoutStore.clearBuyNow()
+    } else {
+      cartStore.removeSelectedItems()
+    }
+
+    if (isBuyNowMode.value) {
+      try {
+        await ElMessageBox.confirm(
+          `使用${paymentMethodLabel(paymentMethod.value)}支付 ${totalLabel}？`,
+          '确认支付',
+          {
+            confirmButtonText: '立即支付',
+            cancelButtonText: '取消支付',
+            type: 'warning',
+          },
+        )
+        await payOrder(order.orderNo, paymentMethod.value)
+        ElMessage.success(`已使用${paymentMethodLabel(paymentMethod.value)}支付成功`)
+        router.push(`/orders/${order.orderNo}`)
+      } catch {
+        ElMessage.info('订单已创建，请在 30 分钟内完成支付')
+        router.push(`/orders/${order.orderNo}`)
+      }
+      return
+    }
+
+    ElMessage.success('下单成功，请在 30 分钟内完成支付')
+    router.push(`/orders/${order.orderNo}`)
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  cartStore.refreshPrices(appStore.currency).catch(() => undefined)
-  if (!cartStore.selectedItems.length) {
-    ElMessage.warning('请先选择要结算的商品')
-    router.replace('/cart')
+watch(selectedAddressId, (value) => {
+  if (typeof value === 'number') {
+    const address = addresses.value.find((item) => item.id === value)
+    if (address) applyAddress(address)
   }
+})
+
+onMounted(async () => {
+  if (isBuyNowMode.value) {
+    if (!checkoutStore.buyNowItem) {
+      ElMessage.warning('购买商品已失效，请重新选择')
+      router.replace('/')
+      return
+    }
+  } else {
+    checkoutStore.clearBuyNow()
+    cartStore.refreshPrices(appStore.currency).catch(() => undefined)
+    if (!cartStore.selectedItems.length) {
+      ElMessage.warning('请先选择要结算的商品')
+      router.replace('/cart')
+      return
+    }
+  }
+
+  await loadAddresses()
 })
 </script>
 
 <template>
-  <div>
-    <h2 class="page-title">确认订单</h2>
+  <div class="checkout-page">
+    <h2 class="page-title">{{ isBuyNowMode ? '立即购买' : '确认订单' }}</h2>
 
     <el-row :gutter="20">
       <el-col :xs="24" :md="14">
-        <el-card shadow="never" class="section-card">
-          <template #header><span>收货信息</span></template>
-          <el-form label-width="90px">
+        <el-card shadow="never" class="section-card" v-loading="addressLoading">
+          <template #header>
+            <div class="section-header">
+              <span>收货信息</span>
+              <el-button link type="primary" @click="router.push('/user')">管理地址</el-button>
+            </div>
+          </template>
+
+          <div v-if="addresses.length" class="address-picker">
+            <button
+              v-for="item in addresses"
+              :key="item.id"
+              type="button"
+              class="address-option"
+              :class="{ 'is-active': selectedAddressId === item.id }"
+              @click="selectAddress(item.id)"
+            >
+              <div class="option-head">
+                <span class="option-name">{{ item.receiverName }}</span>
+                <span class="option-phone">{{ item.receiverPhone }}</span>
+                <el-tag v-if="item.isDefault" size="small" type="warning">默认</el-tag>
+                <el-tag v-if="item.label" size="small" effect="plain">{{ item.label }}</el-tag>
+              </div>
+              <p class="option-detail">{{ item.detailAddress }}</p>
+            </button>
+
+            <button
+              type="button"
+              class="address-option address-option-manual"
+              :class="{ 'is-active': selectedAddressId === 'manual' }"
+              @click="selectManual"
+            >
+              <div class="option-head">
+                <el-icon><Plus /></el-icon>
+                <span>手动填写新地址</span>
+              </div>
+            </button>
+          </div>
+
+          <el-form
+            v-if="selectedAddressId === 'manual' || !addresses.length"
+            label-width="90px"
+            class="address-form"
+          >
             <el-form-item label="收货人" required>
               <el-input v-model="form.receiverName" placeholder="请输入姓名" />
             </el-form-item>
@@ -84,6 +223,10 @@ onMounted(() => {
               />
             </el-form-item>
           </el-form>
+
+          <p v-else class="address-preview">
+            将使用：{{ formatShippingAddress(form.receiverName, form.receiverPhone, form.receiverAddress) }}
+          </p>
         </el-card>
       </el-col>
 
@@ -91,7 +234,10 @@ onMounted(() => {
         <el-card shadow="never" class="section-card order-summary">
           <template #header><span>订单摘要</span></template>
           <div v-for="item in checkoutItems" :key="item.productSkuId" class="summary-item">
-            <span class="name">{{ item.title }} × {{ item.quantity }}</span>
+            <div class="summary-item-main">
+              <span class="name">{{ item.title }} × {{ item.quantity }}</span>
+              <span v-if="item.specText" class="spec">{{ item.specText }}</span>
+            </div>
             <span>{{ appStore.formatPrice(item.price * item.quantity) }}</span>
           </div>
           <el-divider />
@@ -99,9 +245,14 @@ onMounted(() => {
             <span>应付总额</span>
             <span class="amount">{{ appStore.formatPrice(checkoutTotal) }}</span>
           </div>
-          <el-button type="primary" size="large" :loading="loading" style="width: 100%; margin-top: 20px" @click="handleSubmit">
+
+          <PaymentMethodPicker v-if="isBuyNowMode" v-model="paymentMethod" class="payment-section" />
+
+          <el-button type="primary" size="large" :loading="loading" class="submit-btn" @click="handleSubmit">
             提交订单
           </el-button>
+          <p v-if="isBuyNowMode" class="buy-tip">先创建待支付订单，确认后将跳转支付；取消支付可在 30 分钟内继续付款</p>
+          <p v-else class="buy-tip">提交后将生成待支付订单，请在 30 分钟内完成支付</p>
         </el-card>
       </el-col>
     </el-row>
@@ -109,9 +260,102 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.checkout-page {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.page-title {
+  font-family: var(--cb-font-display);
+  font-size: 26px;
+  letter-spacing: 0.05em;
+  margin: 0 0 20px;
+}
+
 .section-card {
   margin-bottom: 20px;
   border-radius: 12px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.address-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.address-option {
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--cb-border);
+  border-radius: 12px;
+  background: rgba(201, 169, 98, 0.04);
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.address-option:hover {
+  border-color: rgba(201, 169, 98, 0.35);
+}
+
+.address-option.is-active {
+  border-color: rgba(201, 169, 98, 0.55);
+  box-shadow: 0 0 0 1px rgba(201, 169, 98, 0.18);
+  background: rgba(201, 169, 98, 0.1);
+}
+
+.address-option-manual .option-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cb-accent);
+  font-weight: 600;
+}
+
+.option-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.option-name {
+  font-weight: 700;
+  color: var(--cb-text);
+}
+
+.option-phone {
+  color: var(--cb-text-dim);
+  font-size: 13px;
+}
+
+.option-detail {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cb-text-muted);
+}
+
+.address-form {
+  margin-top: 4px;
+}
+
+.address-preview {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(201, 169, 98, 0.08);
+  font-size: 12px;
+  color: var(--cb-text-dim);
 }
 
 .summary-item {
@@ -122,9 +366,21 @@ onMounted(() => {
   font-size: 14px;
 }
 
-.summary-item .name {
+.summary-item-main {
   flex: 1;
-  color: #606266;
+  min-width: 0;
+}
+
+.summary-item .name {
+  display: block;
+  color: var(--cb-text-dim);
+}
+
+.summary-item .spec {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--cb-text-muted);
 }
 
 .summary-total {
@@ -135,7 +391,25 @@ onMounted(() => {
 }
 
 .summary-total .amount {
-  color: #f56c6c;
+  color: var(--cb-accent);
   font-size: 22px;
+}
+
+.submit-btn {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.payment-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--cb-border);
+}
+
+.buy-tip {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--cb-text-muted);
 }
 </style>

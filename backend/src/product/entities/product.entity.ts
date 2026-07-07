@@ -25,6 +25,11 @@ export interface LocalizedTitle {
   en: string;
 }
 
+export interface ProductSpecOption {
+  name: string;
+  values?: string[];
+}
+
 @Entity('products')
 export class Product {
   @PrimaryGeneratedColumn()
@@ -69,6 +74,9 @@ export class Product {
     },
   })
   salesCount: number;
+
+  @Column({ name: 'spec_options', type: 'json', nullable: true })
+  specOptions: ProductSpecOption[] | null;
 
   @ManyToOne(() => Category, (category) => category.products, { nullable: true })
   @JoinColumn({ name: 'category_id' })

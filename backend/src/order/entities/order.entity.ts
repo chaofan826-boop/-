@@ -19,6 +19,13 @@ export enum OrderStatus {
   CANCELLED = 'cancelled',
 }
 
+export enum PaymentMethod {
+  WECHAT = 'wechat',
+  ALIPAY = 'alipay',
+  PAYPAL = 'paypal',
+  UNIONPAY = 'unionpay',
+}
+
 @Entity('orders')
 export class Order {
   @PrimaryGeneratedColumn()
@@ -42,6 +49,12 @@ export class Order {
 
   @Column({ name: 'shipping_address', type: 'text' })
   shippingAddress: string;
+
+  @Column({ name: 'payment_method', type: 'varchar', length: 32, nullable: true })
+  paymentMethod: PaymentMethod | null;
+
+  @Column({ name: 'pay_expires_at', type: 'datetime', nullable: true })
+  payExpiresAt: Date | null;
 
   @OneToMany(() => OrderItem, (item) => item.order, { cascade: true })
   items: OrderItem[];

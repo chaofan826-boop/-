@@ -15,10 +15,7 @@ export enum SkuStatus {
   INACTIVE = 'inactive',
 }
 
-export interface SkuSpecValues {
-  color?: string;
-  size?: string;
-}
+export type SkuSpecValues = Record<string, string>;
 
 export type MultiCurrencyPrices = Record<string, number>;
 

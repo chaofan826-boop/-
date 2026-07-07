@@ -37,6 +37,10 @@ export class SkuUpdateDto {
 
   @IsOptional()
   @IsObject()
+  specValues?: Record<string, string>;
+
+  @IsOptional()
+  @IsObject()
   prices?: Record<string, number>;
 
   @IsOptional()
@@ -65,6 +69,10 @@ export class SkuDto {
   @IsOptional()
   @IsString()
   size?: string;
+
+  @IsOptional()
+  @IsObject()
+  specValues?: Record<string, string>;
 
   @IsObject()
   prices: Record<string, number>;

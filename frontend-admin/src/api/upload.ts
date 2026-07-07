@@ -17,3 +17,9 @@ export const uploadBannerImage = (file: File) => {
   formData.append('file', file)
   return post<{ url: string }>('/upload/banner', formData)
 }
+
+export const uploadChatImage = (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return post<{ url: string }>('/upload/chat', formData)
+}

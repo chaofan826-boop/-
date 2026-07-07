@@ -5,3 +5,9 @@ export const uploadAvatar = (file: File) => {
   formData.append('file', file)
   return post<{ url: string }>('/upload/avatar', formData)
 }
+
+export const uploadChatImage = (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return post<{ url: string }>('/upload/chat', formData)
+}

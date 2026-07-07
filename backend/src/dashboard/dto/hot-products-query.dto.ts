@@ -4,6 +4,7 @@ export enum HotProductsPeriod {
   DAY = 'day',
   MONTH = 'month',
   YEAR = 'year',
+  ALL = 'all',
 }
 
 export enum HotProductsSortBy {

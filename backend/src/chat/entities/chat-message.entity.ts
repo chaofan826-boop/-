@@ -30,6 +30,19 @@ export class ChatMessage {
   @Column({ type: 'text' })
   content: string;
 
+  @Column({ name: 'reply_to_message_id', nullable: true })
+  replyToMessageId: number | null;
+
+  @ManyToOne(() => ChatMessage, { nullable: true })
+  @JoinColumn({ name: 'reply_to_message_id' })
+  replyToMessage: ChatMessage | null;
+
+  @Column({ name: 'is_recalled', default: false })
+  isRecalled: boolean;
+
+  @Column({ name: 'recalled_at', type: 'datetime', nullable: true })
+  recalledAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

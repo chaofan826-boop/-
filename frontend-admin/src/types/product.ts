@@ -11,11 +11,17 @@ export interface ProductCategory {
   name: LocalizedTitle
 }
 
+export interface ProductSpecOption {
+  name: string
+  values?: string[]
+}
+
 export interface ProductSku {
   id?: number
   skuCode: string
   color?: string
   size?: string
+  specValues?: Record<string, string>
   prices: Record<string, number>
   stock: number
   imageUrl?: string
@@ -34,6 +40,7 @@ export interface Product {
   categoryId: number | null
   category?: ProductCategory | null
   salesCount: number
+  specOptions?: ProductSpecOption[] | null
   skus: ProductSku[]
   createdAt: string
   updatedAt: string
@@ -49,6 +56,7 @@ export interface CreateProductPayload {
   status?: ProductStatus
   categoryId?: number | null
   salesCount?: number
+  specOptions?: ProductSpecOption[]
   skus: ProductSku[]
 }
 
@@ -63,6 +71,7 @@ export interface UpdateProductPayload {
   status?: ProductStatus
   categoryId?: number | null
   salesCount?: number
+  specOptions?: ProductSpecOption[]
   skus?: ProductSku[]
 }
 

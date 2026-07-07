@@ -6,6 +6,7 @@ import type {
   CreateBannerPayload,
   UpdateBannerPayload,
 } from '@/types/banner'
+import type { BatchDeleteResult } from '@/types/batch-delete'
 import { del, get, post } from './request'
 
 export const getBanners = (params?: BannerQuery) =>
@@ -28,3 +29,6 @@ export const updateBannerSettings = (carouselEnabled: boolean) =>
   post<BannerSettings>('/banners/settings/update', { carouselEnabled })
 
 export const deleteBanner = (id: number) => del<null>(`/banners/${id}`)
+
+export const batchDeleteBanners = (ids: number[]) =>
+  post<BatchDeleteResult>('/banners/batch-delete', { ids })

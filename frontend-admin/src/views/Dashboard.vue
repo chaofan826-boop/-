@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import DashboardOrderTrendChart from '@/components/DashboardOrderTrendChart.vue'
 import DashboardRankingCard from '@/components/DashboardRankingCard.vue'
 import { getDashboardOverview } from '@/api/dashboard'
 import { getProducts } from '@/api/product'
@@ -24,9 +25,16 @@ const periodOptions = [
   { label: '日榜', value: 'day' as const },
   { label: '月榜', value: 'month' as const },
   { label: '年榜', value: 'year' as const },
+  { label: '总榜', value: 'all' as const },
 ]
 
-const datePickerType = computed(() => period.value)
+const showDatePicker = computed(() => period.value !== 'all')
+
+const datePickerType = computed(() => {
+  if (period.value === 'year') return 'year'
+  if (period.value === 'month') return 'month'
+  return 'date'
+})
 const datePickerPlaceholder = computed(() => {
   if (period.value === 'year') return '选择年份'
   if (period.value === 'month') return '选择月份'
@@ -34,6 +42,7 @@ const datePickerPlaceholder = computed(() => {
 })
 
 const rangeSuffix = computed(() => {
+  if (period.value === 'all') return '累计'
   if (period.value === 'day') return '当日'
   if (period.value === 'month') return '当月'
   return '年度'
@@ -71,21 +80,21 @@ onMounted(async () => {
     </div>
 
     <el-row :gutter="20" class="stats-row">
-      <el-col :xs="24" :sm="12" :md="8">
+      <el-col :xs="24" :sm="12" :md="8" :xl="4">
         <div class="stat-card stat-card-users">
           <div class="stat-glow stat-glow-users" />
           <p class="stat-label">用户总人数</p>
           <el-statistic :value="stats.totalUsers" />
         </div>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8">
+      <el-col :xs="24" :sm="12" :md="8" :xl="4">
         <div class="stat-card stat-card-sales">
           <div class="stat-glow stat-glow-sales" />
           <p class="stat-label">今日销售额</p>
           <el-statistic :value="stats.todaySales" prefix="$" :precision="2" />
         </div>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8">
+      <el-col :xs="24" :sm="12" :md="8" :xl="4">
         <div class="stat-card stat-card-ship stat-card-clickable" @click="goPendingShipment">
           <div class="stat-glow stat-glow-ship" />
           <p class="stat-label">待发货</p>
@@ -93,21 +102,21 @@ onMounted(async () => {
           <p class="stat-hint">点击查看待发货订单 →</p>
         </div>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8">
+      <el-col :xs="24" :sm="12" :md="8" :xl="4">
         <div class="stat-card">
           <div class="stat-glow" />
           <p class="stat-label">商品总数</p>
           <el-statistic :value="stats.products" />
         </div>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8">
+      <el-col :xs="24" :sm="12" :md="8" :xl="4">
         <div class="stat-card stat-card-green">
           <div class="stat-glow stat-glow-green" />
           <p class="stat-label">已上架</p>
           <el-statistic :value="stats.active" />
         </div>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8">
+      <el-col :xs="24" :sm="12" :md="8" :xl="4">
         <div class="stat-card stat-card-total-sales">
           <div class="stat-glow stat-glow-total-sales" />
           <p class="stat-label">平台总销售额</p>
@@ -115,6 +124,8 @@ onMounted(async () => {
         </div>
       </el-col>
     </el-row>
+
+    <DashboardOrderTrendChart />
 
     <div class="ranking-toolbar">
       <p class="toolbar-label">排行榜筛选</p>
@@ -125,6 +136,7 @@ onMounted(async () => {
           </el-radio-button>
         </el-radio-group>
         <el-date-picker
+          v-if="showDatePicker"
           v-model="selectedDate"
           :type="datePickerType"
           :placeholder="datePickerPlaceholder"
@@ -162,11 +174,11 @@ onMounted(async () => {
 
 <style scoped>
 .dashboard {
-  max-width: 1200px;
+  width: 100%;
 }
 
 .page-header {
-  margin-bottom: 28px;
+  margin-bottom: 24px;
 }
 
 .page-tag {
@@ -189,17 +201,28 @@ onMounted(async () => {
 }
 
 .stats-row {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+}
+
+.stats-row :deep(.el-col) {
+  margin-bottom: 16px;
+}
+
+@media (min-width: 1920px) {
+  .stats-row :deep(.el-col) {
+    margin-bottom: 0;
+  }
 }
 
 .stat-card {
   position: relative;
-  padding: 24px;
+  padding: 22px 24px;
+  height: 100%;
   background: var(--cb-surface);
   backdrop-filter: blur(12px);
   border: 1px solid var(--cb-border);
   border-radius: var(--cb-radius);
-  margin-bottom: 16px;
+  margin-bottom: 0;
   overflow: hidden;
   transition: transform 0.25s, box-shadow 0.25s;
 }
@@ -322,6 +345,11 @@ onMounted(async () => {
 }
 
 .ranking-row :deep(.el-col) {
+  display: flex;
   margin-bottom: 20px;
+}
+
+.ranking-row :deep(.ranking-card) {
+  flex: 1;
 }
 </style>

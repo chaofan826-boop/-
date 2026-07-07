@@ -1,4 +1,5 @@
-import { get, patch, del } from './request'
+import { get, patch, del, post } from './request'
+import type { BatchDeleteStringResult } from '@/types/batch-delete'
 
 export interface OrderItem {
   id: number
@@ -14,6 +15,7 @@ export interface OrderItem {
     skuCode?: string
     color?: string | null
     size?: string | null
+    specValues?: Record<string, string> | null
   }
 }
 
@@ -23,12 +25,22 @@ export interface Order {
   totalAmount: number
   status: string
   shippingAddress: string
+  paymentMethod?: string | null
+  payExpiresAt?: string | null
   items: OrderItem[]
-  user?: { name: string; email: string }
+  user?: { name: string; email: string | null; phone?: string | null; region?: string | null }
   createdAt: string
 }
 
-export const getOrders = () => get<Order[]>('/orders')
+export interface QueryOrdersParams {
+  keyword?: string
+  status?: string
+  paymentMethod?: string
+  startDate?: string
+  endDate?: string
+}
+
+export const getOrders = (params?: QueryOrdersParams) => get<Order[]>('/orders', { params })
 export const getOrder = (orderNo: string) => get<Order>(`/orders/${orderNo}`)
 export const updateOrderStatus = (orderNo: string, status: string) =>
   patch<Order>(`/orders/${orderNo}/status`, { status })
@@ -43,3 +55,6 @@ export const updateOrder = (orderNo: string, data: UpdateOrderPayload) =>
   patch<Order>(`/orders/${orderNo}`, data)
 
 export const deleteOrder = (orderNo: string) => del<{ orderNo: string }>(`/orders/${orderNo}`)
+
+export const batchDeleteOrders = (orderNos: string[]) =>
+  post<BatchDeleteStringResult>('/orders/batch-delete', { orderNos })

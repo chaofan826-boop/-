@@ -2,7 +2,10 @@ import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { AuditService } from '../audit/audit.service';
+import { RequestMeta } from '../audit/utils/request-meta.util';
 import { RedisService } from '../common/redis/redis.service';
+import { isAdminRole } from '../common/constants/user-roles';
 import { validatePhoneForRegion, normalizePhone } from '../common/utils/phone.util';
 import type { AdminPermission } from '../common/constants/admin-permissions';
 import { UserRole, UserStatus } from '../user/entities/user.entity';
@@ -42,6 +45,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
+    private readonly auditService: AuditService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthTokenResult> {
@@ -71,19 +75,40 @@ export class AuthService {
     throw new BadRequestException('请填写邮箱，或选择地区并填写手机号');
   }
 
-  async login(dto: LoginDto): Promise<AuthTokenResult> {
-    const user = await this.userService.findByAccount(dto.account.trim());
+  async login(dto: LoginDto, meta?: RequestMeta): Promise<AuthTokenResult> {
+    const account = dto.account.trim();
+    const user = await this.userService.findByAccount(account);
     if (!user || !(await bcrypt.compare(dto.password, user.password))) {
+      if (user && isAdminRole(user.role)) {
+        this.auditService.recordLoginFailure(
+          { user, account, reason: '账号或密码错误' },
+          meta,
+        );
+      }
       throw new UnauthorizedException('账号或密码错误');
     }
     if (user.status === UserStatus.FROZEN) {
+      if (isAdminRole(user.role)) {
+        this.auditService.recordLoginFailure(
+          { user, account, reason: '账号已被冻结' },
+          meta,
+        );
+      }
       throw new UnauthorizedException('账号已被冻结');
     }
     await this.userService.touchLastActive(user.id);
-    return this.buildAuthResponse(this.userService.sanitizeUser(user));
+    const safeUser = this.userService.sanitizeUser(user);
+    if (isAdminRole(safeUser.role)) {
+      this.auditService.recordLoginSuccess(safeUser, account, meta);
+    }
+    return this.buildAuthResponse(safeUser);
   }
 
-  async logout(userId: number) {
+  async logout(userId: number, meta?: RequestMeta) {
+    const user = await this.userService.findAuthProfile(userId);
+    if (user && isAdminRole(user.role)) {
+      this.auditService.recordLogout(user, meta);
+    }
     await this.redisService.deleteToken(userId);
     return null;
   }

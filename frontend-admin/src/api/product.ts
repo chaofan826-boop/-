@@ -1,4 +1,5 @@
 import type { PaginatedResult } from '@/types/api'
+import type { BatchDeleteResult } from '@/types/batch-delete'
 import type {
   CreateProductPayload,
   Product,
@@ -20,6 +21,9 @@ export const updateProduct = (data: UpdateProductPayload) =>
   post<Product>('/products/update', data)
 
 export const deleteProduct = (id: number) => del<null>(`/products/${id}`)
+
+export const batchDeleteProducts = (ids: number[]) =>
+  post<BatchDeleteResult>('/products/batch-delete', { ids })
 
 export const updateProductStatus = (id: number, status: ProductStatus) =>
   patch<Product>(`/products/${id}/status`, { status })

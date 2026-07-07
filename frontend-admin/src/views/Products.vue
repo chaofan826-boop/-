@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import type { UploadRequestOptions } from 'element-plus'
 import {
+  batchDeleteProducts,
   createProduct,
   deleteProduct,
   getProduct,
@@ -14,11 +15,24 @@ import {
 } from '@/api/product'
 import { getCategories } from '@/api/category'
 import { uploadProductImage } from '@/api/upload'
+import {
+  confirmBatchDelete,
+  showBatchDeleteResult,
+  useTableSelection,
+} from '@/composables/useTableSelection'
 import { useUserStore } from '@/stores/user'
 import type { Category } from '@/types/category'
 import type { Product, ProductSku, ProductStatus } from '@/types/product'
+import {
+  buildSpecSignature,
+  getSkuSpecValues,
+  getSpecValueOptions,
+  inferSpecOptionsFromSkus,
+  normalizeSpecOptions,
+} from '@/utils/spec'
 
-type FormSku = ProductSku & { _clientKey: string }
+type SpecOptionForm = { name: string; values: string[] }
+type FormSku = ProductSku & { _clientKey: string; specValues: Record<string, string> }
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -30,9 +44,17 @@ function createClientKey(id?: number) {
 }
 
 const loading = ref(false)
+const tableRef = ref<{ clearSelection: () => void }>()
 const products = ref<Product[]>([])
 const categoryOptions = ref<Category[]>([])
 const total = ref(0)
+const batchDeleting = ref(false)
+const {
+  selectedIds,
+  hasSelection,
+  handleSelectionChange,
+  clearSelection,
+} = useTableSelection<Product>()
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增商品')
 const editingId = ref<number | null>(null)
@@ -53,36 +75,81 @@ const query = reactive({
 const defaultSku = (): FormSku => ({
   _clientKey: createClientKey(),
   skuCode: '',
-  color: '',
-  size: '',
+  specValues: {},
   prices: { USD: 0, CNY: 0 },
   stock: 0,
 })
 
-function toFormSku(s: ProductSku): FormSku {
+function defaultSpecOption(): SpecOptionForm {
+  return { name: '', values: [] }
+}
+
+function activeSpecOptions() {
+  return form.specOptions
+    .map((option) => ({
+      name: option.name.trim(),
+      values: option.values.map((value) => value.trim()).filter(Boolean),
+    }))
+    .filter((option) => option.name)
+}
+
+function syncSkuSpecKeys() {
+  const names = activeSpecOptions().map((option) => option.name)
+  for (const sku of form.skus) {
+    for (const key of Object.keys(sku.specValues)) {
+      if (!names.includes(key)) {
+        delete sku.specValues[key]
+      }
+    }
+    for (const name of names) {
+      if (!(name in sku.specValues)) {
+        sku.specValues[name] = ''
+      }
+    }
+  }
+}
+
+function resolveSpecOptions(detail: Product): SpecOptionForm[] {
+  const inferred = inferSpecOptionsFromSkus(detail.skus || [], detail.specOptions)
+  return inferred.length ? inferred.map((option) => ({
+    name: option.name,
+    values: [...(option.values || [])],
+  })) : []
+}
+
+function toFormSku(s: ProductSku, specOptions: SpecOptionForm[]): FormSku {
+  const specValues = getSkuSpecValues(s)
+  for (const option of specOptions) {
+    const name = option.name.trim()
+    if (name && !(name in specValues)) {
+      specValues[name] = ''
+    }
+  }
   return {
     _clientKey: createClientKey(s.id),
     id: s.id,
     skuCode: s.skuCode,
-    color: s.color || '',
-    size: s.size || '',
+    specValues,
     prices: { ...s.prices },
     stock: Math.max(0, Number(s.stock) || 0),
   }
 }
 
 function buildSkuPayload(s: FormSku) {
+  const specValues = Object.fromEntries(
+    Object.entries(s.specValues)
+      .map(([name, value]) => [name.trim(), value.trim()] as const)
+      .filter(([name, value]) => name && value),
+  )
   const payload: {
     id?: number
     skuCode: string
-    color?: string
-    size?: string
+    specValues?: Record<string, string>
     prices: Record<string, number>
     stock: number
   } = {
     skuCode: s.skuCode,
-    color: s.color || undefined,
-    size: s.size || undefined,
+    specValues: Object.keys(specValues).length ? specValues : undefined,
     prices: {
       USD: Number(s.prices?.USD) || 0,
       CNY: Number(s.prices?.CNY) || 0,
@@ -93,6 +160,10 @@ function buildSkuPayload(s: FormSku) {
     payload.id = Number(s.id)
   }
   return payload
+}
+
+function specValueChoices(option: SpecOptionForm) {
+  return getSpecValueOptions(option.name.trim(), option.values, form.skus)
 }
 
 const form = reactive({
@@ -106,6 +177,7 @@ const form = reactive({
   salesCount: 0,
   mainImage: '',
   images: [] as string[],
+  specOptions: [] as SpecOptionForm[],
   skus: [defaultSku()] as FormSku[],
 })
 
@@ -122,6 +194,7 @@ function resetForm() {
     salesCount: 0,
     mainImage: '',
     images: [] as string[],
+    specOptions: [] as SpecOptionForm[],
     skus: [defaultSku()],
   })
 }
@@ -151,7 +224,7 @@ async function handleMainImageUpload(options: UploadRequestOptions) {
     ElMessage.success('主图上传成功')
     options.onSuccess?.(res)
   } catch (err) {
-    options.onError?.(err as Error)
+    options.onError?.(err as never)
   } finally {
     mainImageUploading.value = false
   }
@@ -160,7 +233,7 @@ async function handleMainImageUpload(options: UploadRequestOptions) {
 async function handleGalleryUpload(options: UploadRequestOptions) {
   if (form.images.length >= MAX_GALLERY) {
     ElMessage.warning(`图集最多 ${MAX_GALLERY} 张`)
-    options.onError?.(new Error('limit'))
+    options.onError?.(new Error('limit') as never)
     return
   }
   galleryUploading.value = true
@@ -170,7 +243,7 @@ async function handleGalleryUpload(options: UploadRequestOptions) {
     ElMessage.success('图片已添加')
     options.onSuccess?.(res)
   } catch (err) {
-    options.onError?.(err as Error)
+    options.onError?.(err as never)
   } finally {
     galleryUploading.value = false
   }
@@ -228,6 +301,7 @@ async function openEdit(row: Product) {
   dialogTitle.value = '编辑商品'
   editingId.value = row.id
   const detail = await getProduct(row.id)
+  const specOptions = resolveSpecOptions(detail)
   Object.assign(form, {
     merchantId: detail.merchantId,
     spuCode: detail.spuCode,
@@ -239,15 +313,33 @@ async function openEdit(row: Product) {
     salesCount: detail.salesCount ?? 0,
     mainImage: detail.mainImage || '',
     images: detail.images?.length ? [...detail.images] : [],
+    specOptions,
     skus: detail.skus?.length
-      ? detail.skus.map((s) => toFormSku(s))
+      ? detail.skus.map((s) => toFormSku(s, specOptions))
       : [defaultSku()],
   })
+  syncSkuSpecKeys()
   dialogVisible.value = true
 }
 
+function addSpecOption() {
+  form.specOptions.push(defaultSpecOption())
+}
+
+function removeSpecOption(index: number) {
+  const removedName = form.specOptions[index]?.name.trim()
+  form.specOptions.splice(index, 1)
+  if (removedName) {
+    for (const sku of form.skus) {
+      delete sku.specValues[removedName]
+    }
+  }
+}
+
 function addSkuRow() {
-  form.skus.push(defaultSku())
+  const sku = defaultSku()
+  syncSkuSpecKeys()
+  form.skus.push(sku)
 }
 
 async function removeSkuRow(index: number) {
@@ -290,6 +382,35 @@ async function handleSubmit() {
     }
   }
 
+  const specOptions = normalizeSpecOptions(form.specOptions)
+  if (specOptions.length) {
+    for (const option of specOptions) {
+      if (!option.name.trim()) {
+        ElMessage.warning('请填写规格维度名称')
+        return
+      }
+    }
+    for (const sku of form.skus) {
+      for (const option of specOptions) {
+        if (!sku.specValues[option.name]?.trim()) {
+          ElMessage.warning(`请填写 SKU「${sku.skuCode}」的「${option.name}」规格`)
+          return
+        }
+      }
+    }
+    const signatures = new Set<string>()
+    for (const sku of form.skus) {
+      const signature = buildSpecSignature(
+        Object.fromEntries(specOptions.map((option) => [option.name, sku.specValues[option.name]?.trim() || ''])),
+      )
+      if (signatures.has(signature)) {
+        ElMessage.warning('存在重复的 SKU 规格组合')
+        return
+      }
+      signatures.add(signature)
+    }
+  }
+
   submitLoading.value = true
   try {
     const payload = {
@@ -302,6 +423,7 @@ async function handleSubmit() {
       salesCount: Math.max(0, Number(form.salesCount) || 0),
       mainImage: form.mainImage.trim() || null,
       images: form.images.length ? form.images : null,
+      specOptions,
       skus: form.skus.map(buildSkuPayload),
     }
     if (editingId.value) {
@@ -328,6 +450,27 @@ async function handleDelete(row: Product) {
   await loadProducts()
 }
 
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) return
+
+  try {
+    await confirmBatchDelete(selectedIds.value.length, '个商品')
+  } catch {
+    return
+  }
+
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteProducts(selectedIds.value)
+    showBatchDeleteResult(result, '个商品')
+    tableRef.value?.clearSelection()
+    clearSelection()
+    await loadProducts()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 async function handleStatusChange(row: Product, status: ProductStatus) {
   await updateProductStatus(row.id, status)
   ElMessage.success(status === 'active' ? '已上架' : '已下架')
@@ -351,6 +494,13 @@ onMounted(async () => {
   await loadCategoryOptions()
   await loadProducts()
 })
+
+watch(
+  () => form.specOptions.map((option) => `${option.name}::${option.values.join('|')}`).join('||'),
+  () => {
+    syncSkuSpecKeys()
+  },
+)
 </script>
 
 <template>
@@ -360,7 +510,18 @@ onMounted(async () => {
         <p class="page-tag">商品管理</p>
         <h2 class="page-title">商品管理</h2>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新增商品</el-button>
+      <div class="toolbar-actions">
+        <el-button
+          type="danger"
+          plain
+          :disabled="!hasSelection"
+          :loading="batchDeleting"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ hasSelection ? ` (${selectedIds.length})` : '' }}
+        </el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新增商品</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" class="filter-card">
@@ -393,7 +554,15 @@ onMounted(async () => {
     </el-card>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="products" stripe>
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="products"
+        row-key="id"
+        stripe
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="图片" width="72">
           <template #default="{ row }">
@@ -460,7 +629,7 @@ onMounted(async () => {
       </div>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="860px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="920px" destroy-on-close>
       <el-form label-width="100px">
         <el-divider content-position="left">SPU 信息</el-divider>
         <el-row :gutter="16">
@@ -573,6 +742,50 @@ onMounted(async () => {
         </el-form-item>
 
         <el-divider content-position="left">
+          规格维度
+          <el-button link type="primary" style="margin-left: 12px" @click="addSpecOption">+ 添加规格维度</el-button>
+        </el-divider>
+
+        <p class="spec-hint">先配置规格维度（如颜色、容量、版本），再为每个 SKU 选择对应规格值。</p>
+
+        <div v-if="!form.specOptions.length" class="spec-empty">
+          暂未配置规格维度，可直接添加 SKU；如需多规格商品，请先添加维度。
+        </div>
+
+        <div v-for="(option, optionIndex) in form.specOptions" :key="`spec-${optionIndex}`" class="spec-option-block">
+          <div class="spec-option-header">
+            <span>维度 #{{ optionIndex + 1 }}</span>
+            <el-button link type="danger" @click="removeSpecOption(optionIndex)">删除</el-button>
+          </div>
+          <el-row :gutter="12">
+            <el-col :span="8">
+              <el-form-item label="规格名" label-width="72px" required>
+                <el-input v-model="option.name" size="small" placeholder="如 颜色、容量、版本" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="16">
+              <el-form-item label="可选值" label-width="72px">
+                <el-select
+                  v-model="option.values"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  collapse-tags
+                  collapse-tags-tooltip
+                  size="small"
+                  placeholder="输入后回车添加，如 Red / 128GB"
+                  style="width: 100%"
+                  @change="(values: string[]) => option.values = values.map((value) => value.trim()).filter(Boolean)"
+                >
+                  <el-option v-for="value in option.values" :key="value" :label="value" :value="value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
+
+        <el-divider content-position="left">
           SKU 规格
           <el-button link type="primary" style="margin-left: 12px" @click="addSkuRow">+ 添加 SKU</el-button>
         </el-divider>
@@ -588,14 +801,32 @@ onMounted(async () => {
                 <el-input v-model="sku.skuCode" size="small" />
               </el-form-item>
             </el-col>
-            <el-col :span="8">
-              <el-form-item label="颜色" label-width="80px">
-                <el-input v-model="sku.color" size="small" placeholder="Red" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="8">
-              <el-form-item label="尺寸" label-width="80px">
-                <el-input v-model="sku.size" size="small" placeholder="M" />
+            <el-col v-for="option in activeSpecOptions()" :key="`${sku._clientKey}-${option.name}`" :span="8">
+              <el-form-item :label="option.name" label-width="80px" required>
+                <el-select
+                  v-if="specValueChoices({ name: option.name, values: option.values }).length"
+                  v-model="sku.specValues[option.name]"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  size="small"
+                  style="width: 100%"
+                  :placeholder="`选择${option.name}`"
+                >
+                  <el-option
+                    v-for="value in specValueChoices({ name: option.name, values: option.values })"
+                    :key="value"
+                    :label="value"
+                    :value="value"
+                  />
+                </el-select>
+                <el-input
+                  v-else
+                  v-model="sku.specValues[option.name]"
+                  size="small"
+                  :placeholder="`填写${option.name}`"
+                />
               </el-form-item>
             </el-col>
           </el-row>
@@ -652,6 +883,13 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .filter-card {
   margin-bottom: 16px;
 }
@@ -673,6 +911,40 @@ onMounted(async () => {
   border-radius: 8px;
   padding: 12px 12px 0;
   margin-bottom: 12px;
+}
+
+.spec-hint {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  color: var(--cb-text-muted);
+}
+
+.spec-empty {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--cb-border);
+  border-radius: 8px;
+  color: var(--cb-text-muted);
+  font-size: 13px;
+}
+
+.spec-option-block {
+  background: rgba(201, 169, 98, 0.03);
+  border: 1px solid var(--cb-border);
+  border-radius: 8px;
+  padding: 12px 12px 0;
+  margin-bottom: 12px;
+}
+
+.spec-option-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--cb-text-dim);
+  letter-spacing: 0.04em;
 }
 
 .sku-header {

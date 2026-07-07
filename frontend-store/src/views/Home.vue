@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch, computed } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import { getBanners } from '@/api/banner'
+import { isHeroBanner } from '@/utils/banner'
 import { getHomeFeatured } from '@/api/home'
 import { getMinPrice, getProducts, formatSalesCount } from '@/api/product'
+import HomeHeroCard from '@/components/home/HomeHeroCard.vue'
+import HomeFeaturedProducts from '@/components/home/HomeFeaturedProducts.vue'
 import HomeFlashSale from '@/components/home/HomeFlashSale.vue'
 import HomeHotRanking from '@/components/home/HomeHotRanking.vue'
 import HomePromotions from '@/components/home/HomePromotions.vue'
@@ -12,6 +15,7 @@ import type { Banner } from '@/types/banner'
 import type { HomeFeatured } from '@/types/home'
 import type { Product } from '@/types/product'
 import { useAppStore } from '@/stores/app'
+import { resolveProductImage } from '@/utils/product-image'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,14 +26,25 @@ const banners = ref<Banner[]>([])
 const total = ref(0)
 const carouselRef = ref<{ prev: () => void; next: () => void } | null>(null)
 const activeBannerIndex = ref(0)
+const bannerHeight = ref('420px')
 const featured = ref<HomeFeatured | null>(null)
 
-const isDefaultBrowse = computed(() => !query.keyword)
+function updateBannerHeight() {
+  bannerHeight.value = window.innerWidth <= 768 ? '260px' : '420px'
+}
+
+function preloadBannerImages(items: Banner[]) {
+  for (const banner of items) {
+    if (isHeroBanner(banner)) continue
+    const img = new Image()
+    img.decoding = 'async'
+    img.src = banner.imageUrl
+  }
+}
+
+const useFeaturedProducts = computed(() => (featured.value?.featured?.products?.length ?? 0) > 0)
 
 const featuredTitle = computed(() => {
-  if (query.keyword) {
-    return appStore.locale === 'zh' ? '搜索结果' : 'Search Results'
-  }
   if (featured.value?.featured?.title) {
     const t = featured.value.featured.title
     return appStore.locale === 'zh' ? t.zh : t.en
@@ -38,19 +53,18 @@ const featuredTitle = computed(() => {
 })
 
 const showProductSection = computed(() => {
-  if (query.keyword) return true
-  return (featured.value?.featured?.products?.length ?? 0) > 0
+  return useFeaturedProducts.value || products.value.length > 0 || loading.value
 })
 
 const displayProducts = computed(() => {
-  if (isDefaultBrowse.value && featured.value?.featured?.products?.length) {
-    return featured.value.featured.products as unknown as Product[]
+  if (useFeaturedProducts.value) {
+    return featured.value!.featured!.products as unknown as Product[]
   }
   return products.value
 })
 
 const showPagination = computed(() => {
-  if (isDefaultBrowse.value && featured.value?.featured?.products?.length) {
+  if (useFeaturedProducts.value) {
     return false
   }
   return total.value > query.pageSize
@@ -59,29 +73,15 @@ const showPagination = computed(() => {
 const query = reactive({
   page: 1,
   pageSize: 12,
-  keyword: '',
 })
-
-function syncKeywordFromRoute() {
-  const kw = typeof route.query.keyword === 'string' ? route.query.keyword.trim() : ''
-  query.keyword = kw
-  query.page = 1
-}
-
-function clearSearch() {
-  query.keyword = ''
-  query.page = 1
-  router.replace({ path: '/' })
-  loadProducts()
-}
 
 function bannerTitle(b: Banner) {
   if (!b.title) return ''
   return appStore.locale === 'zh' ? b.title.zh : b.title.en
 }
 
-function productImage(p: Product) {
-  return p.mainImage || `https://picsum.photos/seed/${p.id}/400/400`
+function productImage(p: Product, index = 0) {
+  return resolveProductImage(p, index)
 }
 
 function displayTitle(p: Product) {
@@ -102,7 +102,9 @@ async function loadFeatured() {
 }
 
 async function loadBanners() {
-  banners.value = await getBanners()
+  const list = await getBanners()
+  banners.value = list
+  preloadBannerImages(list)
 }
 
 async function loadProducts() {
@@ -111,7 +113,6 @@ async function loadProducts() {
     const res = await getProducts({
       page: query.page,
       pageSize: query.pageSize,
-      keyword: query.keyword || undefined,
     })
     products.value = res.list
     total.value = res.total
@@ -119,14 +120,6 @@ async function loadProducts() {
     loading.value = false
   }
 }
-
-watch(
-  () => route.query.keyword,
-  () => {
-    syncKeywordFromRoute()
-    loadProducts()
-  },
-)
 
 watch(
   () => appStore.currency,
@@ -145,56 +138,71 @@ watch(
 )
 
 onMounted(async () => {
-  syncKeywordFromRoute()
+  updateBannerHeight()
+  window.addEventListener('resize', updateBannerHeight)
   await Promise.all([loadBanners(), loadFeatured(), loadProducts()])
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateBannerHeight)
 })
 </script>
 <template>
-  <div>
-    <section class="hero home-wide-block">
-      <div class="hero-bg" />
-      <div class="hero-line" />
-      <div class="hero-content">
-        <p class="hero-badge">PREMIUM COLLECTION</p>
-        <h1>
-          <span class="hero-title-main">全球臻品</span>
-          <span class="hero-title-sub">尊享跨境购物体验</span>
-        </h1>
-        <p class="hero-desc">甄选全球好物 · 品质臻选 · 尊享直邮</p>
-        <div class="hero-stats">
-          <div class="stat">
-            <span class="stat-num">50+</span>
-            <span class="stat-label">国家直邮</span>
-          </div>
-          <div class="stat-divider" />
-          <div class="stat">
-            <span class="stat-num">24h</span>
-            <span class="stat-label">极速发货</span>
-          </div>
-          <div class="stat-divider" />
-          <div class="stat">
-            <span class="stat-num">100%</span>
-            <span class="stat-label">正品保障</span>
-          </div>
-        </div>
-      </div>
-    </section>
+  <div class="home-page">
+    <div class="home-bg-motion" aria-hidden="true">
+      <span class="bg-orb bg-orb-1" />
+      <span class="bg-orb bg-orb-2" />
+      <span class="bg-orb bg-orb-3" />
+      <span class="bg-orb bg-orb-4" />
+      <span class="bg-orb bg-orb-5" />
+      <span class="bg-orb bg-orb-6" />
+      <span class="bg-orb bg-orb-7" />
+      <span class="bg-orb bg-orb-8" />
+      <span class="bg-ring bg-ring-1" />
+      <span class="bg-ring bg-ring-2" />
+      <span class="bg-ring bg-ring-3" />
+      <span class="bg-streak bg-streak-1" />
+      <span class="bg-streak bg-streak-2" />
+      <span class="bg-streak bg-streak-3" />
+      <span class="bg-arc bg-arc-1" />
+      <span class="bg-arc bg-arc-2" />
+      <span class="bg-dot bg-dot-1" />
+      <span class="bg-dot bg-dot-2" />
+      <span class="bg-dot bg-dot-3" />
+      <span class="bg-dot bg-dot-4" />
+      <span class="bg-dot bg-dot-5" />
+      <span class="bg-dot bg-dot-6" />
+    </div>
 
     <section v-if="banners.length" class="banner-section home-wide-block">
       <div class="banner-frame">
         <div class="banner-glow" />
         <el-carousel
           ref="carouselRef"
-          height="420px"
+          :height="bannerHeight"
           :interval="5000"
           arrow="never"
-          indicator-position="outside"
           :pause-on-hover="true"
+          :motion-blur="false"
           @change="(i: number) => (activeBannerIndex = i)"
         >
-          <el-carousel-item v-for="b in banners" :key="b.id">
-            <div class="banner-slide" @click="handleBannerClick(b)">
-              <img :src="b.imageUrl" :alt="bannerTitle(b) || 'banner'" loading="lazy" />
+          <el-carousel-item v-for="(b, index) in banners" :key="b.id">
+            <div
+              v-if="isHeroBanner(b)"
+              class="banner-slide banner-slide--hero"
+              @click="handleBannerClick(b)"
+            >
+              <HomeHeroCard variant="banner" />
+            </div>
+            <div v-else class="banner-slide" @click="handleBannerClick(b)">
+              <img
+                :src="b.imageUrl"
+                :alt="bannerTitle(b) || 'banner'"
+                :loading="index <= 1 ? 'eager' : 'lazy'"
+                :fetchpriority="index === 0 ? 'high' : 'auto'"
+                decoding="async"
+                draggable="false"
+              />
               <div class="banner-overlay" />
               <div v-if="bannerTitle(b)" class="banner-caption">
                 <span class="caption-line" />
@@ -233,23 +241,25 @@ onMounted(async () => {
 
     <HomeFlashSale v-if="featured?.flashSale?.items?.length" :data="featured.flashSale" />
 
-    <HomePromotions v-if="featured?.promotions?.length" :promotions="featured.promotions" />
-
     <HomeHotRanking v-if="featured?.hotRanking.length" :items="featured.hotRanking" />
 
-    <section v-if="showProductSection" v-loading="loading" class="product-section">
+    <HomePromotions v-if="featured?.promotions?.length" :promotions="featured.promotions" />
+
+    <HomeFeaturedProducts
+      v-if="useFeaturedProducts && displayProducts.length"
+      :products="displayProducts"
+      :title="featuredTitle"
+    />
+
+    <section v-else-if="showProductSection" v-loading="loading" class="product-section">
       <div class="section-head">
         <p class="section-label">{{ featuredTitle }}</p>
-        <div v-if="query.keyword" class="search-tag">
-          <span>「{{ query.keyword }}」共 {{ total }} 件</span>
-          <el-button link type="primary" @click="clearSearch">清除</el-button>
-        </div>
       </div>
       <el-row :gutter="16">
-        <el-col v-for="p in displayProducts" :key="p.id" :xs="12" :sm="8" :md="6" :lg="6">
+        <el-col v-for="(p, index) in displayProducts" :key="p.id" :xs="12" :sm="8" :md="6" :lg="6">
           <div class="product-card" @click="router.push(`/products/${p.id}`)">
             <div class="img-wrap">
-              <img :src="productImage(p)" :alt="displayTitle(p)" loading="lazy" />
+              <img :src="productImage(p, index)" :alt="displayTitle(p)" loading="lazy" />
             </div>
             <div class="info">
               <h3>{{ displayTitle(p) }}</h3>
@@ -264,7 +274,7 @@ onMounted(async () => {
       </el-row>
 
       <div v-if="!loading && !displayProducts.length" class="empty-state">
-        <p>{{ query.keyword ? '未找到相关商品' : '暂无商品' }}</p>
+        <p>{{ appStore.locale === 'zh' ? '暂无商品' : 'No products' }}</p>
       </div>
 
       <div v-if="showPagination" class="pagination">
@@ -281,6 +291,428 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.home-page {
+  position: relative;
+  isolation: isolate;
+  padding-bottom: 8px;
+}
+
+.home-page::before {
+  content: '';
+  position: absolute;
+  top: -24px;
+  bottom: -48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  background:
+    radial-gradient(ellipse 75% 48% at 50% -6%, rgba(232, 213, 163, 0.11), transparent 54%),
+    radial-gradient(ellipse 40% 36% at 8% 55%, rgba(120, 72, 56, 0.14), transparent 58%),
+    radial-gradient(ellipse 36% 32% at 92% 72%, rgba(168, 120, 80, 0.1), transparent 56%),
+    linear-gradient(180deg, #16110e 0%, #1a1410 38%, #120e0b 100%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.home-page::after {
+  content: '';
+  position: absolute;
+  top: -24px;
+  bottom: -48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.home-bg-motion {
+  position: absolute;
+  top: -24px;
+  bottom: -48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.home-bg-motion > span {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.bg-orb {
+  border-radius: 50%;
+  filter: blur(48px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+}
+
+.bg-orb-1 {
+  top: 6%;
+  left: 8%;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(245, 235, 220, 0.22) 0%, rgba(232, 213, 163, 0.08) 45%, transparent 70%);
+  animation: bg-drift-a 22s ease-in-out infinite;
+}
+
+.bg-orb-2 {
+  top: 18%;
+  right: 6%;
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(255, 248, 240, 0.18) 0%, rgba(201, 169, 98, 0.06) 50%, transparent 72%);
+  animation: bg-drift-b 26s ease-in-out infinite;
+}
+
+.bg-orb-3 {
+  top: 42%;
+  left: 14%;
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, rgba(232, 213, 163, 0.16) 0%, rgba(168, 120, 80, 0.05) 55%, transparent 75%);
+  animation: bg-drift-c 19s ease-in-out infinite;
+}
+
+.bg-orb-4 {
+  top: 58%;
+  right: 12%;
+  width: 320px;
+  height: 320px;
+  background: radial-gradient(circle, rgba(255, 250, 245, 0.14) 0%, rgba(201, 169, 98, 0.05) 48%, transparent 70%);
+  animation: bg-drift-d 30s ease-in-out infinite;
+}
+
+.bg-orb-5 {
+  bottom: 8%;
+  left: 38%;
+  width: 240px;
+  height: 240px;
+  background: radial-gradient(circle, rgba(245, 230, 210, 0.15) 0%, rgba(120, 72, 56, 0.04) 52%, transparent 74%);
+  animation: bg-drift-e 24s ease-in-out infinite;
+}
+
+.bg-orb-6 {
+  top: 8%;
+  left: 52%;
+  width: 160px;
+  height: 160px;
+  background: radial-gradient(circle, rgba(255, 252, 248, 0.2) 0%, rgba(232, 213, 163, 0.06) 50%, transparent 72%);
+  animation: bg-drift-c 21s ease-in-out infinite 3s;
+}
+
+.bg-orb-7 {
+  top: 65%;
+  left: 4%;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(240, 228, 210, 0.14) 0%, rgba(201, 169, 98, 0.04) 55%, transparent 76%);
+  animation: bg-drift-b 27s ease-in-out infinite 6s;
+}
+
+.bg-orb-8 {
+  top: 48%;
+  right: 4%;
+  width: 140px;
+  height: 140px;
+  filter: blur(36px);
+  background: radial-gradient(circle, rgba(255, 248, 240, 0.2) 0%, rgba(168, 120, 80, 0.05) 58%, transparent 78%);
+  animation: bg-drift-a 17s ease-in-out infinite 1.5s;
+}
+
+.bg-ring {
+  border-radius: 50%;
+  border: 1px solid rgba(232, 213, 163, 0.14);
+  box-shadow:
+    0 0 24px rgba(232, 213, 163, 0.06),
+    inset 0 0 20px rgba(255, 248, 240, 0.04);
+  opacity: 0.45;
+}
+
+.bg-ring-1 {
+  top: 28%;
+  right: 22%;
+  width: 120px;
+  height: 120px;
+  animation: bg-ring-spin 36s linear infinite, bg-pulse 8s ease-in-out infinite;
+}
+
+.bg-ring-2 {
+  bottom: 22%;
+  left: 10%;
+  width: 88px;
+  height: 88px;
+  border-color: rgba(255, 248, 240, 0.12);
+  animation: bg-ring-spin 28s linear infinite reverse, bg-pulse 10s ease-in-out infinite 2s;
+}
+
+.bg-ring-3 {
+  top: 12%;
+  left: 28%;
+  width: 64px;
+  height: 64px;
+  border-color: rgba(232, 213, 163, 0.1);
+  animation: bg-ring-spin 32s linear infinite, bg-pulse 12s ease-in-out infinite 5s;
+}
+
+.bg-streak {
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(232, 213, 163, 0.28), rgba(255, 248, 240, 0.12), transparent);
+  opacity: 0.35;
+  filter: blur(0.5px);
+}
+
+.bg-streak-1 {
+  top: 35%;
+  left: -8%;
+  width: 42%;
+  transform: rotate(-8deg);
+  animation: bg-streak-slide 18s ease-in-out infinite;
+}
+
+.bg-streak-2 {
+  top: 72%;
+  right: -6%;
+  width: 36%;
+  transform: rotate(6deg);
+  animation: bg-streak-slide-b 22s ease-in-out infinite 4s;
+}
+
+.bg-streak-3 {
+  top: 52%;
+  left: 22%;
+  width: 28%;
+  transform: rotate(-14deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 248, 240, 0.2), rgba(232, 213, 163, 0.1), transparent);
+  animation: bg-streak-slide-c 20s ease-in-out infinite 2s;
+}
+
+.bg-arc {
+  border-radius: 50%;
+  border: 1px solid transparent;
+  border-top-color: rgba(255, 248, 240, 0.18);
+  border-right-color: rgba(232, 213, 163, 0.08);
+  opacity: 0.4;
+}
+
+.bg-arc-1 {
+  top: 38%;
+  right: 8%;
+  width: 160px;
+  height: 160px;
+  animation: bg-arc-float 25s ease-in-out infinite;
+}
+
+.bg-arc-2 {
+  bottom: 32%;
+  right: 36%;
+  width: 100px;
+  height: 100px;
+  border-top-color: rgba(232, 213, 163, 0.14);
+  animation: bg-arc-float 20s ease-in-out infinite reverse 3s;
+}
+
+.bg-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 248, 240, 0.75);
+  box-shadow: 0 0 12px rgba(232, 213, 163, 0.45);
+}
+
+.bg-dot-1 {
+  top: 14%;
+  left: 46%;
+  animation: bg-dot-twinkle 4s ease-in-out infinite;
+}
+
+.bg-dot-2 {
+  top: 52%;
+  right: 28%;
+  animation: bg-dot-twinkle 5.5s ease-in-out infinite 1.2s;
+}
+
+.bg-dot-3 {
+  bottom: 18%;
+  left: 62%;
+  animation: bg-dot-twinkle 6s ease-in-out infinite 2.4s;
+}
+
+.bg-dot-4 {
+  top: 32%;
+  left: 22%;
+  width: 4px;
+  height: 4px;
+  animation: bg-dot-twinkle 7s ease-in-out infinite 0.8s;
+}
+
+.bg-dot-5 {
+  top: 78%;
+  right: 18%;
+  animation: bg-dot-twinkle 4.8s ease-in-out infinite 3s;
+}
+
+.bg-dot-6 {
+  top: 24%;
+  right: 42%;
+  width: 5px;
+  height: 5px;
+  animation: bg-dot-twinkle 5.2s ease-in-out infinite 1.8s;
+}
+
+@keyframes bg-drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translate(36px, 28px) scale(1.08);
+    opacity: 0.72;
+  }
+}
+
+@keyframes bg-drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.42;
+  }
+  50% {
+    transform: translate(-32px, 40px) scale(1.12);
+    opacity: 0.65;
+  }
+}
+
+@keyframes bg-drift-c {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.48;
+  }
+  50% {
+    transform: translate(24px, -30px) scale(1.06);
+    opacity: 0.68;
+  }
+}
+
+@keyframes bg-drift-d {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translate(-40px, -24px) scale(1.1);
+    opacity: 0.62;
+  }
+}
+
+@keyframes bg-drift-e {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.44;
+  }
+  50% {
+    transform: translate(20px, -36px) scale(1.07);
+    opacity: 0.66;
+  }
+}
+
+@keyframes bg-ring-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes bg-pulse {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes bg-streak-slide {
+  0%,
+  100% {
+    transform: translateX(0) rotate(-8deg);
+    opacity: 0.2;
+  }
+  50% {
+    transform: translateX(48px) rotate(-8deg);
+    opacity: 0.45;
+  }
+}
+
+@keyframes bg-streak-slide-b {
+  0%,
+  100% {
+    transform: translateX(0) rotate(6deg);
+    opacity: 0.18;
+  }
+  50% {
+    transform: translateX(-40px) rotate(6deg);
+    opacity: 0.42;
+  }
+}
+
+@keyframes bg-streak-slide-c {
+  0%,
+  100% {
+    transform: translateX(0) rotate(-14deg);
+    opacity: 0.15;
+  }
+  50% {
+    transform: translateX(32px) rotate(-14deg);
+    opacity: 0.38;
+  }
+}
+
+@keyframes bg-arc-float {
+  0%,
+  100% {
+    transform: rotate(0deg) translateY(0);
+    opacity: 0.28;
+  }
+  50% {
+    transform: rotate(180deg) translateY(-20px);
+    opacity: 0.52;
+  }
+}
+
+@keyframes bg-dot-twinkle {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-bg-motion > span {
+    animation: none !important;
+    opacity: 0.35;
+  }
+}
+
 .home-wide-block {
   --banner-bleed: 28px;
   width: calc(100% + var(--banner-bleed) * 2);
@@ -316,15 +748,37 @@ onMounted(async () => {
 
 .banner-frame :deep(.el-carousel) {
   --el-carousel-indicator-height: 6px;
+  --el-carousel-transition-duration: 0.52s;
 }
 
 .banner-frame :deep(.el-carousel__container) {
-  border-radius: var(--cb-radius-lg);
+  transform: translateZ(0);
+  overflow: hidden;
 }
 
-.banner-frame :deep(.el-carousel__indicators--outside) {
-  margin-top: 14px;
-  padding: 0 16px 4px;
+.banner-frame :deep(.el-carousel__item) {
+  width: 100%;
+  overflow: hidden;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.banner-frame :deep(.el-carousel__item.is-animating) .banner-slide img {
+  transition: none;
+  transform: translateZ(0) scale(1.08);
+}
+
+.banner-frame :deep(.el-carousel__indicators) {
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(10, 10, 12, 0.52);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 5;
 }
 
 .banner-frame :deep(.el-carousel__indicator) {
@@ -435,21 +889,32 @@ onMounted(async () => {
 .banner-slide {
   position: relative;
   width: 100%;
-  height: 420px;
+  height: 100%;
   cursor: pointer;
   overflow: hidden;
+  background: #060608;
 }
 
 .banner-slide img {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
   object-fit: cover;
-  transform: scale(1.02);
-  transition: transform 6s ease;
+  transform: translateZ(0) scale(1.08);
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .banner-frame :deep(.el-carousel__item.is-active) .banner-slide img {
-  transform: scale(1.06);
+  transform: translateZ(0) scale(1.12);
+  transition: transform 7s linear;
+}
+
+.banner-frame :deep(.el-carousel__item:not(.is-active)) .banner-slide img {
+  transition: none;
+  transform: translateZ(0) scale(1.08);
 }
 
 .banner-overlay {
@@ -507,125 +972,13 @@ onMounted(async () => {
   border-bottom: none;
 }
 
-.search-tag {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--cb-text-dim);
+.banner-slide--hero {
+  cursor: default;
+  background: #120e0b;
 }
 
-.hero {
-  position: relative;
-  border-radius: var(--cb-radius-lg);
-  padding: 72px 32px;
-  margin-bottom: 40px;
-  overflow: hidden;
-  border: 1px solid var(--cb-border);
-  background: linear-gradient(145deg, rgba(18, 18, 22, 0.95), rgba(10, 10, 12, 0.98));
-  box-shadow: var(--cb-shadow-elevated);
-}
-
-.hero-bg {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 70% 80% at 80% 20%, rgba(201, 169, 98, 0.1), transparent 55%),
-    radial-gradient(ellipse 50% 60% at 10% 90%, rgba(139, 115, 85, 0.06), transparent 50%);
-  pointer-events: none;
-}
-
-.hero-line {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 120px;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--cb-accent), transparent);
-}
-
-.hero-content {
-  position: relative;
-  z-index: 1;
-  text-align: center;
-}
-
-.hero-badge {
-  font-family: var(--cb-font-body);
-  font-size: 11px;
-  letter-spacing: 0.35em;
-  color: var(--cb-accent);
-  margin-bottom: 20px;
-  text-transform: uppercase;
-}
-
-.hero h1 {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.hero-title-main {
-  font-family: var(--cb-font-display);
-  font-size: clamp(2rem, 5vw, 3.2rem);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--cb-text);
-}
-
-.hero-title-sub {
-  font-family: var(--cb-font-display);
-  font-size: clamp(1rem, 2.5vw, 1.4rem);
-  font-weight: 500;
-  font-style: italic;
-  color: var(--cb-gold-light);
-  letter-spacing: 0.2em;
-}
-
-.hero-desc {
-  color: var(--cb-text-dim);
-  font-size: 15px;
-  letter-spacing: 0.12em;
-  margin-bottom: 36px;
-}
-
-.hero-stats {
-  display: inline-flex;
-  align-items: center;
-  gap: 32px;
-  padding: 20px 40px;
-  background: rgba(201, 169, 98, 0.04);
-  border: 1px solid var(--cb-border);
-  border-radius: var(--cb-radius-lg);
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.stat-num {
-  font-family: var(--cb-font-display);
-  font-size: 26px;
-  font-weight: 600;
-  color: var(--cb-accent);
-}
-
-.stat-label {
-  font-size: 11px;
-  letter-spacing: 0.15em;
-  color: var(--cb-text-muted);
-  text-transform: uppercase;
-}
-
-.stat-divider {
-  width: 1px;
-  height: 36px;
-  background: var(--cb-border);
+.banner-slide--hero :deep(.hero-card) {
+  border-radius: 0;
 }
 
 .section-label {
@@ -721,11 +1074,11 @@ onMounted(async () => {
   }
 
   .banner-frame :deep(.el-carousel) {
-    height: 260px !important;
+    --el-carousel-transition-duration: 0.48s;
   }
 
   .banner-slide {
-    height: 260px;
+    height: 100%;
   }
 
   .banner-nav {
@@ -762,23 +1115,9 @@ onMounted(async () => {
     font-size: 11px;
   }
 
-  .banner-frame :deep(.el-carousel__indicators--outside) {
-    margin-top: 10px;
-  }
-
-  .hero {
-    padding: 48px 20px;
-  }
-
-  .hero-stats {
-    gap: 20px;
-    padding: 16px 24px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
-  .stat-divider {
-    display: none;
+  .banner-frame :deep(.el-carousel__indicators) {
+    bottom: 12px;
+    padding: 6px 12px;
   }
 }
 </style>

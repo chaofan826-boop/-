@@ -10,3 +10,6 @@ export const getConversationMessages = (conversationId: number) =>
 
 export const sendChatMessage = (conversationId: number, data: SendMessagePayload) =>
   post<ChatMessage>(`/chat/conversations/${conversationId}/messages`, data)
+
+export const recallChatMessage = (conversationId: number, messageId: number) =>
+  post<ChatMessage>(`/chat/conversations/${conversationId}/messages/${messageId}/recall`)

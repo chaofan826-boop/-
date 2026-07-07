@@ -6,15 +6,17 @@ const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/web
 const AVATAR_MAX_SIZE = 2 * 1024 * 1024;
 const PRODUCT_MAX_SIZE = 5 * 1024 * 1024;
 const BANNER_MAX_SIZE = 5 * 1024 * 1024;
+const CHAT_MAX_SIZE = 5 * 1024 * 1024;
 
 @Injectable()
 export class UploadService implements OnModuleInit {
   readonly avatarsDir = join(process.cwd(), 'uploads', 'avatars');
   readonly productsDir = join(process.cwd(), 'uploads', 'products');
   readonly bannersDir = join(process.cwd(), 'uploads', 'banners');
+  readonly chatDir = join(process.cwd(), 'uploads', 'chat');
 
   onModuleInit() {
-    for (const dir of [this.avatarsDir, this.productsDir, this.bannersDir]) {
+    for (const dir of [this.avatarsDir, this.productsDir, this.bannersDir, this.chatDir]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
@@ -45,6 +47,10 @@ export class UploadService implements OnModuleInit {
     this.validateImageFile(file, BANNER_MAX_SIZE);
   }
 
+  validateChatFile(file: Express.Multer.File) {
+    this.validateImageFile(file, CHAT_MAX_SIZE);
+  }
+
   static buildAvatarFilename(userId: number, originalName: string) {
     const ext = extname(originalName).toLowerCase() || '.jpg';
     return `avatar-${userId}-${Date.now()}${ext}`;
@@ -62,6 +68,12 @@ export class UploadService implements OnModuleInit {
     return `banner-${Date.now()}-${rand}${ext}`;
   }
 
+  static buildChatFilename(userId: number, originalName: string) {
+    const ext = extname(originalName).toLowerCase() || '.jpg';
+    const rand = Math.random().toString(36).slice(2, 8);
+    return `chat-${userId}-${Date.now()}-${rand}${ext}`;
+  }
+
   toAvatarPublicUrl(filename: string) {
     return `/api/uploads/avatars/${filename}`;
   }
@@ -72,6 +84,10 @@ export class UploadService implements OnModuleInit {
 
   toBannerPublicUrl(filename: string) {
     return `/api/uploads/banners/${filename}`;
+  }
+
+  toChatPublicUrl(filename: string) {
+    return `/api/uploads/chat/${filename}`;
   }
 
   /** @deprecated use toAvatarPublicUrl */

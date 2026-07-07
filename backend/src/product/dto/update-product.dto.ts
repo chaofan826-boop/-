@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { ProductStatus } from '../entities/product.entity';
 import { LocalizedTitleDto } from './localized-title.dto';
+import { ProductSpecOptionDto } from './spec-option.dto';
 import { SkuUpdateDto } from './sku.dto';
 
 export class UpdateProductDto {
@@ -62,6 +63,12 @@ export class UpdateProductDto {
   @IsInt()
   @Min(0)
   salesCount?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductSpecOptionDto)
+  specOptions?: ProductSpecOptionDto[];
 
   @IsOptional()
   @IsArray()

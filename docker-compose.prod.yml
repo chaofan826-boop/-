@@ -1,0 +1,110 @@
+version: '3.3'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: cb-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      TZ: ${TZ}
+    ports:
+      - "13306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - cb-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: cb-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cb-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cb-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT}
+      NODE_ENV: ${NODE_ENV}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE: ${DB_DATABASE}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+    ports:
+      - "13000:3000"
+    volumes:
+      - ./data/uploads:/app/uploads
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - cb-net
+
+  frontend-admin:
+    build:
+      context: ./frontend-admin
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    container_name: cb-frontend-admin
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - cb-net
+
+  frontend-store:
+    build:
+      context: ./frontend-store
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    container_name: cb-frontend-store
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - cb-net
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: cb-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "8080:80"
+    depends_on:
+      - backend
+      - frontend-admin
+      - frontend-store
+    networks:
+      - cb-net
+
+networks:
+  cb-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:

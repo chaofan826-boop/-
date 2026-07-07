@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { SkuDto, SkuUpdateDto, toInt } from '../dto/sku.dto';
 import { ProductSku, SkuStatus } from '../entities/product-sku.entity';
+import { normalizeSkuSpecInput } from '../utils/spec.util';
 
 @Injectable()
 export class ProductSkuRepository {
@@ -44,13 +45,14 @@ export class ProductSkuRepository {
     dto: SkuDto | SkuUpdateDto,
   ): ProductSku {
     const stock = toInt(dto.stock) ?? 0;
+    const normalized = normalizeSkuSpecInput(dto);
     return this.repository.create({
       merchantId,
       productId,
       skuCode: dto.skuCode!,
-      color: dto.color ?? null,
-      size: dto.size ?? null,
-      specValues: { color: dto.color, size: dto.size },
+      color: normalized.color,
+      size: normalized.size,
+      specValues: Object.keys(normalized.specValues).length ? normalized.specValues : null,
       prices: dto.prices ?? {},
       stock,
       imageUrl: dto.imageUrl ?? null,
@@ -81,5 +83,10 @@ export class ProductSkuRepository {
       const label = sku?.skuCode ?? `#${id}`;
       throw new BadRequestException(`Insufficient stock for SKU ${label}`);
     }
+  }
+
+  async incrementStock(id: number, quantity: number, manager?: EntityManager) {
+    const repo = manager ? manager.getRepository(ProductSku) : this.repository;
+    await repo.increment({ id }, 'stock', quantity);
   }
 }

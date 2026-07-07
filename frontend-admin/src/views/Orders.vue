@@ -5,10 +5,19 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Edit, MoreFilled, Search, Van, View } from '@element-plus/icons-vue'
 
-import { deleteOrder, getOrders, updateOrder, updateOrderStatus, type Order } from '@/api/order'
+import { batchDeleteOrders, deleteOrder, getOrder, getOrders, updateOrder, updateOrderStatus, type Order } from '@/api/order'
+import {
+  confirmBatchDelete,
+  showBatchDeleteResult,
+  useTableSelectionByKey,
+} from '@/composables/useTableSelection'
 
 import { createShipping, type ShippingCarrier } from '@/api/shipping'
+import { formatSpecText } from '@/utils/spec'
+import { formatPhoneDisplay } from '@/constants/regions'
+import { paymentMethodLabel, PAYMENT_METHOD_OPTIONS } from '@/utils/payment-method'
 
 
 
@@ -19,10 +28,28 @@ const router = useRouter()
 
 
 const loading = ref(false)
+const tableRef = ref<{ clearSelection: () => void }>()
+const batchDeleting = ref(false)
 
 const orders = ref<Order[]>([])
+const {
+  selectedKeys: selectedOrderNos,
+  hasSelection,
+  handleSelectionChange,
+  clearSelection,
+} = useTableSelectionByKey<Order>((row) => row.orderNo)
 
 const statusFilter = ref('')
+
+const query = reactive({
+  keyword: '',
+  status: '' as string,
+  paymentMethod: '' as string,
+  startDate: '',
+  endDate: '',
+})
+
+const dateRange = ref<[string, string] | null>(null)
 
 const shipDialogVisible = ref(false)
 
@@ -31,6 +58,10 @@ const shipLoading = ref(false)
 const shippingOrderNo = ref<string | null>(null)
 
 const editDialogVisible = ref(false)
+
+const detailDialogVisible = ref(false)
+const detailLoading = ref(false)
+const detailOrder = ref<Order | null>(null)
 
 const editLoading = ref(false)
 
@@ -87,13 +118,29 @@ const carrierOptions = [
 
 
 
-const filteredOrders = computed(() => {
+const filteredOrders = computed(() => orders.value)
 
-  if (!statusFilter.value) return orders.value
+const resultCount = computed(() => orders.value.length)
 
-  return orders.value.filter((order) => order.status === statusFilter.value)
+function buildQueryParams() {
+  return {
+    keyword: query.keyword.trim() || undefined,
+    status: query.status || undefined,
+    paymentMethod: query.paymentMethod || undefined,
+    startDate: query.startDate || undefined,
+    endDate: query.endDate || undefined,
+  }
+}
 
-})
+function syncDateRangeToQuery() {
+  if (dateRange.value?.length === 2) {
+    query.startDate = dateRange.value[0]
+    query.endDate = dateRange.value[1]
+  } else {
+    query.startDate = ''
+    query.endDate = ''
+  }
+}
 
 
 
@@ -131,22 +178,39 @@ function syncStatusFromRoute() {
 
   const status = typeof route.query.status === 'string' ? route.query.status : ''
 
-  statusFilter.value = statusOptions.some((item) => item.value === status) ? status : ''
+  const nextStatus = statusOptions.some((item) => item.value === status) ? status : ''
+  statusFilter.value = nextStatus
+  query.status = nextStatus
 
 }
 
 
 
-function onStatusFilterChange(status?: string) {
+function onStatusFilterChange() {
+  const nextStatus = query.status || ''
+  statusFilter.value = nextStatus
   router.replace({
     path: route.path,
-    query: status ? { status } : {},
+    query: nextStatus ? { status: nextStatus } : {},
   })
+  loadOrders()
 }
 
 function resetFilters() {
+  query.keyword = ''
+  query.status = ''
+  query.paymentMethod = ''
+  query.startDate = ''
+  query.endDate = ''
+  dateRange.value = null
   statusFilter.value = ''
-  onStatusFilterChange()
+  router.replace({ path: route.path, query: {} })
+  loadOrders()
+}
+
+function handleSearch() {
+  syncDateRangeToQuery()
+  loadOrders()
 }
 
 function itemTitle(item: Order['items'][number]) {
@@ -154,10 +218,8 @@ function itemTitle(item: Order['items'][number]) {
 }
 
 function itemSpec(item: Order['items'][number]) {
-  const parts: string[] = []
-  if (item.productSku?.color) parts.push(item.productSku.color)
-  if (item.productSku?.size) parts.push(item.productSku.size)
-  return parts.join(' / ')
+  if (!item.productSku) return ''
+  return formatSpecText(item.productSku)
 }
 
 function formatAmount(amount: number | string) {
@@ -181,7 +243,7 @@ async function loadOrders() {
 
   try {
 
-    orders.value = await getOrders()
+    orders.value = await getOrders(buildQueryParams())
 
   } finally {
 
@@ -215,6 +277,31 @@ function openShipDialog(row: Order) {
 
   shipDialogVisible.value = true
 
+}
+
+async function openDetailDialog(row: Order) {
+  detailDialogVisible.value = true
+  detailLoading.value = true
+  detailOrder.value = null
+  try {
+    detailOrder.value = await getOrder(row.orderNo)
+  } catch {
+    detailDialogVisible.value = false
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function openEditFromDetail() {
+  if (!detailOrder.value) return
+  openEditDialog(detailOrder.value)
+  detailDialogVisible.value = false
+}
+
+function openShipFromDetail() {
+  if (!detailOrder.value) return
+  openShipDialog(detailOrder.value)
+  detailDialogVisible.value = false
 }
 
 function openEditDialog(row: Order) {
@@ -285,6 +372,44 @@ async function handleDelete(row: Order) {
   await deleteOrder(row.orderNo)
   ElMessage.success('订单已删除')
   await loadOrders()
+}
+
+function handleOrderAction(command: string, row: Order) {
+  switch (command) {
+    case 'view':
+      void openDetailDialog(row)
+      break
+    case 'edit':
+      openEditDialog(row)
+      break
+    case 'ship':
+      openShipDialog(row)
+      break
+    case 'delete':
+      void handleDelete(row)
+      break
+  }
+}
+
+async function handleBatchDelete() {
+  if (!selectedOrderNos.value.length) return
+
+  try {
+    await confirmBatchDelete(selectedOrderNos.value.length, '个订单')
+  } catch {
+    return
+  }
+
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteOrders(selectedOrderNos.value)
+    showBatchDeleteResult(result, '个订单')
+    tableRef.value?.clearSelection()
+    clearSelection()
+    await loadOrders()
+  } finally {
+    batchDeleting.value = false
+  }
 }
 
 
@@ -358,57 +483,123 @@ onMounted(loadOrders)
         <p class="page-tag">订单管理</p>
 
         <h2 class="page-title">订单管理</h2>
+        <p class="order-count">共 {{ resultCount }} 笔订单</p>
 
       </div>
 
       <div class="filter-actions">
-        <el-select
-          v-model="statusFilter"
-          clearable
-          placeholder="全部状态"
-          class="status-filter"
-          @change="onStatusFilterChange"
+        <el-button
+          type="danger"
+          plain
+          :disabled="!hasSelection"
+          :loading="batchDeleting"
+          @click="handleBatchDelete"
         >
-
-          <el-option
-
-            v-for="item in statusOptions"
-
-            :key="item.value"
-
-            :label="item.label"
-
-            :value="item.value"
-
-          />
-
-        </el-select>
-        <el-button @click="resetFilters">重置</el-button>
+          批量删除{{ hasSelection ? ` (${selectedOrderNos.length})` : '' }}
+        </el-button>
+        <el-button :loading="loading" @click="loadOrders">刷新</el-button>
       </div>
 
     </div>
 
+    <el-card shadow="never" class="filter-card">
+      <el-form :inline="true" @submit.prevent="handleSearch">
+        <el-form-item label="搜索">
+          <el-input
+            v-model="query.keyword"
+            placeholder="订单号 / 客户 / 邮箱 / 地址 / 商品"
+            clearable
+            style="width: 260px"
+            @keyup.enter="handleSearch"
+            @clear="handleSearch"
+          />
+        </el-form-item>
+        <el-form-item label="订单状态">
+          <el-select
+            v-model="query.status"
+            clearable
+            placeholder="全部"
+            style="width: 120px"
+            @change="onStatusFilterChange"
+          >
+            <el-option
+              v-for="item in statusOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="支付方式">
+          <el-select
+            v-model="query.paymentMethod"
+            clearable
+            placeholder="全部"
+            style="width: 130px"
+            @change="handleSearch"
+          >
+            <el-option
+              v-for="item in PAYMENT_METHOD_OPTIONS"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="下单时间">
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            style="width: 260px"
+            @change="handleSearch"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
+          <el-button @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
 
 
-    <el-card shadow="never">
 
-      <el-table v-loading="loading" :data="filteredOrders" stripe>
+    <el-card shadow="never" class="table-card">
 
-        <el-table-column prop="orderNo" label="订单编号" min-width="180" />
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="filteredOrders"
+        row-key="orderNo"
+        stripe
+        class="orders-table"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
+        <el-table-column prop="orderNo" label="订单编号" min-width="140" show-overflow-tooltip />
 
-        <el-table-column label="客户" min-width="160">
-
+        <el-table-column label="客户" min-width="88" show-overflow-tooltip>
           <template #default="{ row }">
-
-            <div>{{ row.user?.name }}</div>
-
-            <div class="sub-text">{{ row.user?.email }}</div>
-
+            <div>{{ row.user?.name || '—' }}</div>
           </template>
-
         </el-table-column>
 
-        <el-table-column label="订单商品" min-width="260">
+        <el-table-column label="手机号" width="128" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.user?.phone ? formatPhoneDisplay(row.user.region, row.user.phone) : '—' }}
+          </template>
+        </el-table-column>
+
+        <el-table-column label="邮箱" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.user?.email || '—' }}
+          </template>
+        </el-table-column>
+
+        <el-table-column label="订单商品" min-width="180" class-name="items-column">
           <template #default="{ row }">
             <div v-if="row.items?.length" class="order-items">
               <div v-for="item in row.items" :key="item.id" class="order-item-line">
@@ -423,29 +614,27 @@ onMounted(loadOrders)
           </template>
         </el-table-column>
 
-        <el-table-column label="金额" width="120">
+        <el-table-column label="金额" width="96">
           <template #default="{ row }">
             {{ formatAmount(orderTotal(row)) }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="shippingAddress" label="收货地址" min-width="180" show-overflow-tooltip />
-
-        <el-table-column label="状态" width="120">
-
+        <el-table-column label="支付方式" width="96" show-overflow-tooltip>
           <template #default="{ row }">
-
-            <el-tag :type="statusTagType(row.status)" size="small">
-
-              {{ statusLabel(row.status) }}
-
-            </el-tag>
-
+            {{ paymentMethodLabel(row.paymentMethod) }}
           </template>
-
         </el-table-column>
 
-        <el-table-column label="订单状态" width="140">
+        <el-table-column
+          prop="shippingAddress"
+          label="收货地址"
+          min-width="120"
+          class-name="address-column"
+          show-overflow-tooltip
+        />
+
+        <el-table-column label="状态" width="118" class-name="status-column">
 
           <template #default="{ row }">
 
@@ -454,6 +643,8 @@ onMounted(loadOrders)
               :model-value="row.status"
 
               size="small"
+
+              class="status-select"
 
               @change="(v: string) => changeStatus(row.orderNo, v)"
 
@@ -477,7 +668,7 @@ onMounted(loadOrders)
 
         </el-table-column>
 
-        <el-table-column prop="createdAt" label="创建时间" width="170">
+        <el-table-column prop="createdAt" label="创建时间" width="158" show-overflow-tooltip>
 
           <template #default="{ row }">
 
@@ -487,22 +678,31 @@ onMounted(loadOrders)
 
         </el-table-column>
 
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="72" align="center" class-name="actions-column">
 
           <template #default="{ row }">
 
-            <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
-
-            <el-button
-              v-if="row.status === 'paid'"
-              link
-              type="primary"
-              @click="openShipDialog(row)"
+            <el-dropdown
+              trigger="hover"
+              placement="bottom-end"
+              :show-timeout="180"
+              :hide-timeout="160"
+              @command="(command: string) => handleOrderAction(command, row)"
             >
-              发货
-            </el-button>
-
-            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+              <el-button link type="primary" :icon="MoreFilled" aria-label="订单操作" />
+              <template #dropdown>
+                <el-dropdown-menu class="order-action-menu">
+                  <el-dropdown-item command="view" :icon="View">查看详情</el-dropdown-item>
+                  <el-dropdown-item command="edit" :icon="Edit">编辑订单</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status === 'paid'" command="ship" :icon="Van">
+                    发货
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete" divided :icon="Delete" class="order-action-danger">
+                    删除订单
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
 
           </template>
 
@@ -511,6 +711,81 @@ onMounted(loadOrders)
       </el-table>
 
     </el-card>
+
+
+
+    <el-dialog v-model="detailDialogVisible" title="订单详情" width="760px" destroy-on-close>
+      <div v-loading="detailLoading">
+        <template v-if="detailOrder">
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="订单编号" :span="2">
+              {{ detailOrder.orderNo }}
+            </el-descriptions-item>
+            <el-descriptions-item label="订单状态">
+              <el-tag :type="statusTagType(detailOrder.status)" size="small">
+                {{ statusLabel(detailOrder.status) }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="支付方式">
+              {{ paymentMethodLabel(detailOrder.paymentMethod) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="客户姓名">
+              {{ detailOrder.user?.name || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="手机号">
+              {{
+                detailOrder.user?.phone
+                  ? formatPhoneDisplay(detailOrder.user.region, detailOrder.user.phone)
+                  : '—'
+              }}
+            </el-descriptions-item>
+            <el-descriptions-item label="邮箱" :span="2">
+              {{ detailOrder.user?.email || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="收货地址" :span="2">
+              {{ detailOrder.shippingAddress }}
+            </el-descriptions-item>
+            <el-descriptions-item label="下单时间">
+              {{ new Date(detailOrder.createdAt).toLocaleString() }}
+            </el-descriptions-item>
+            <el-descriptions-item label="订单金额">
+              <span class="detail-amount">{{ formatAmount(orderTotal(detailOrder)) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item
+              v-if="detailOrder.status === 'pending' && detailOrder.payExpiresAt"
+              label="支付截止"
+              :span="2"
+            >
+              {{ new Date(detailOrder.payExpiresAt).toLocaleString() }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <p class="detail-section-title">商品明细</p>
+          <div class="detail-items">
+            <div v-for="item in detailOrder.items" :key="item.id" class="detail-item-row">
+              <div class="detail-item-main">
+                <strong>{{ itemTitle(item) }}</strong>
+                <span v-if="itemSpec(item)" class="sub-text">{{ itemSpec(item) }}</span>
+              </div>
+              <span class="detail-item-qty">× {{ item.quantity }}</span>
+              <span class="detail-item-price">{{ formatAmount(item.price) }}</span>
+              <span class="detail-item-subtotal">{{ formatAmount(itemSubtotal(item)) }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="detailDialogVisible = false">关闭</el-button>
+        <el-button v-if="detailOrder" type="primary" plain @click="openEditFromDetail">编辑订单</el-button>
+        <el-button
+          v-if="detailOrder?.status === 'paid'"
+          type="primary"
+          @click="openShipFromDetail"
+        >
+          发货
+        </el-button>
+      </template>
+    </el-dialog>
 
 
 
@@ -652,6 +927,12 @@ onMounted(loadOrders)
 
 }
 
+.order-count {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--cb-text-muted);
+}
+
 
 
 .toolbar {
@@ -672,14 +953,6 @@ onMounted(loadOrders)
 
 
 
-.status-filter {
-
-  width: 160px;
-
-}
-
-
-
 .filter-actions {
 
   display: flex;
@@ -688,6 +961,72 @@ onMounted(loadOrders)
 
   gap: 10px;
 
+}
+
+.filter-card {
+  margin-bottom: 16px;
+}
+
+.filter-card :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+
+.table-card {
+  overflow: hidden;
+}
+
+.orders-table {
+  width: 100%;
+}
+
+.table-card :deep(.el-table__body-wrapper),
+.table-card :deep(.el-table__header-wrapper) {
+  overflow-x: hidden;
+}
+
+.table-card :deep(.el-scrollbar__bar.is-horizontal) {
+  display: none;
+}
+
+.table-card :deep(.address-column .cell),
+.table-card :deep(.items-column .cell) {
+  overflow: hidden;
+}
+
+.table-card :deep(.address-column .cell) {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-card :deep(.status-column .cell) {
+  overflow: hidden;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.table-card :deep(.status-select) {
+  width: 98px;
+}
+
+.table-card :deep(.status-select .el-select__wrapper) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.table-card :deep(.actions-column .cell) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.table-card :deep(.actions-column .el-button) {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 16px;
+}
+
+:deep(.order-action-menu .order-action-danger) {
+  color: var(--el-color-danger);
 }
 
 
@@ -715,49 +1054,36 @@ onMounted(loadOrders)
 
 
 .order-item-line {
-
   display: flex;
-
-  flex-wrap: wrap;
-
+  flex-wrap: nowrap;
   align-items: center;
-
   gap: 6px;
-
   font-size: 13px;
-
   line-height: 1.4;
-
+  overflow: hidden;
 }
-
-
 
 .item-name {
-
   color: var(--cb-text);
-
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
-
-
 
 .item-spec {
-
   font-size: 12px;
-
   color: var(--cb-text-muted);
-
+  flex-shrink: 0;
 }
 
-
-
 .item-price {
-
   font-family: var(--cb-font-mono);
-
   font-size: 12px;
-
   color: var(--cb-accent);
-
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 
@@ -832,6 +1158,56 @@ onMounted(loadOrders)
 
   color: var(--cb-text-muted);
 
+}
+
+.detail-amount {
+  font-family: var(--cb-font-display);
+  font-weight: 700;
+  color: var(--cb-accent);
+}
+
+.detail-section-title {
+  margin: 18px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cb-text);
+}
+
+.detail-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-item-row {
+  display: grid;
+  grid-template-columns: 1fr 72px 88px 88px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--cb-border);
+  border-radius: 8px;
+}
+
+.detail-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.detail-item-qty,
+.detail-item-price,
+.detail-item-subtotal {
+  font-family: var(--cb-font-mono);
+  font-size: 13px;
+  color: var(--cb-text-dim);
+  text-align: right;
+}
+
+.detail-item-subtotal {
+  color: var(--cb-accent);
+  font-weight: 600;
 }
 
 </style>

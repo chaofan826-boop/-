@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { copyFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Category, CategoryStatus } from '../../category/entities/category.entity';
@@ -49,11 +51,10 @@ export class SeedService implements OnModuleInit {
     const existing = await this.userService.findByEmail(adminEmail);
     if (existing) return;
 
-    await this.userService.create({
+    await this.userService.createInitialAdmin({
       email: adminEmail,
       password: 'admin123',
       name: 'Admin',
-      role: UserRole.ADMIN,
     });
     this.logger.log(`Default admin created: ${adminEmail} / admin123`);
   }
@@ -80,17 +81,9 @@ export class SeedService implements OnModuleInit {
   }
 
   private async seedBanners() {
-    const count = await this.bannerRepository.count();
-    if (count > 0) return;
+    await this.ensureHeroBanner();
 
-    await this.bannerRepository.save([
-      {
-        title: { zh: '全球臻品 尊享直邮', en: 'Premium Global Collection' },
-        imageUrl: 'https://picsum.photos/seed/cb-banner-1/1400/480',
-        linkUrl: '/',
-        sortOrder: 1,
-        status: BannerStatus.ACTIVE,
-      },
+    const defaults = [
       {
         title: { zh: '数码电子 新品上市', en: 'New Electronics Arrivals' },
         imageUrl: 'https://picsum.photos/seed/cb-banner-2/1400/480',
@@ -105,8 +98,59 @@ export class SeedService implements OnModuleInit {
         sortOrder: 3,
         status: BannerStatus.ACTIVE,
       },
-    ]);
+    ];
+
+    for (const item of defaults) {
+      const existing = await this.bannerRepository.findOne({ where: { imageUrl: item.imageUrl } });
+      if (!existing) {
+        await this.bannerRepository.save(item);
+      }
+    }
+
     this.logger.log('Default banners seeded');
+  }
+
+  private async ensureHeroBanner() {
+    this.copyHeroBannerAsset();
+
+    const imageUrl = '/api/uploads/banners/banner-hero-premium.svg';
+    let banner = await this.bannerRepository.findOne({ where: { imageUrl } });
+
+    if (!banner) {
+      await this.bannerRepository.save({
+        title: { zh: '全球臻品 尊享直邮', en: 'Premium Global Collection' },
+        imageUrl,
+        linkUrl: '/',
+        sortOrder: 0,
+        status: BannerStatus.ACTIVE,
+      });
+      this.logger.log('Hero premium banner seeded');
+      return;
+    }
+
+    const patch: Partial<Banner> = {};
+    if (banner.sortOrder !== 0) patch.sortOrder = 0;
+    if (banner.status !== BannerStatus.ACTIVE) patch.status = BannerStatus.ACTIVE;
+    if (!banner.title) {
+      patch.title = { zh: '全球臻品 尊享直邮', en: 'Premium Global Collection' };
+    }
+    if (Object.keys(patch).length) {
+      await this.bannerRepository.update(banner.id, patch);
+    }
+  }
+
+  private copyHeroBannerAsset() {
+    const src = join(process.cwd(), 'assets', 'banners', 'banner-hero-premium.svg');
+    const destDir = join(process.cwd(), 'uploads', 'banners');
+    const dest = join(destDir, 'banner-hero-premium.svg');
+
+    if (!existsSync(src)) {
+      this.logger.warn('Hero banner asset missing at assets/banners/banner-hero-premium.svg');
+      return;
+    }
+
+    mkdirSync(destDir, { recursive: true });
+    copyFileSync(src, dest);
   }
 
   private async seedMerchantAndProducts() {
@@ -128,13 +172,15 @@ export class SeedService implements OnModuleInit {
     const audio = await this.categoriesRepo.findOne({ where: { code: 'audio' } });
     const accessories = await this.categoriesRepo.findOne({ where: { code: 'accessories' } });
 
+    const catalogImage = (filename: string) => `/api/uploads/products/${filename}`;
+
     const catalog = [
       {
         spuCode: 'SPU-EAR-001',
         title: { zh: '无线降噪耳机', en: 'Wireless Earbuds Pro' },
         description: 'Premium Bluetooth earbuds with ANC',
         categoryId: audio?.id ?? null,
-        mainImage: 'https://picsum.photos/seed/cb-earbuds/600/600',
+        mainImage: catalogImage('spu-ear-001.svg'),
         salesCount: 1286,
         skus: [
           { skuCode: 'SKU-EAR-RED', color: 'Red', prices: { USD: 49.99, CNY: 349 }, stock: 200 },
@@ -146,7 +192,7 @@ export class SeedService implements OnModuleInit {
         title: { zh: '智能运动手表', en: 'Smart Sport Watch' },
         description: 'Health tracking smart watch',
         categoryId: electronics?.id ?? null,
-        mainImage: 'https://picsum.photos/seed/cb-watch/600/600',
+        mainImage: catalogImage('spu-watch-001.svg'),
         salesCount: 856,
         skus: [
           { skuCode: 'SKU-WATCH-SL', color: 'Silver', prices: { USD: 129.99, CNY: 899 }, stock: 80 },
@@ -158,7 +204,7 @@ export class SeedService implements OnModuleInit {
         title: { zh: '便携蓝牙音箱', en: 'Portable Bluetooth Speaker' },
         description: '360° surround sound speaker',
         categoryId: audio?.id ?? null,
-        mainImage: 'https://picsum.photos/seed/cb-speaker/600/600',
+        mainImage: catalogImage('spu-speaker-001.svg'),
         salesCount: 642,
         skus: [
           { skuCode: 'SKU-SPK-BLUE', color: 'Blue', prices: { USD: 79.99, CNY: 559 }, stock: 120 },
@@ -169,7 +215,7 @@ export class SeedService implements OnModuleInit {
         title: { zh: '20000mAh 快充移动电源', en: '20000mAh Power Bank' },
         description: 'Fast charging power bank',
         categoryId: accessories?.id ?? null,
-        mainImage: 'https://picsum.photos/seed/cb-power/600/600',
+        mainImage: catalogImage('spu-power-001.svg'),
         salesCount: 2103,
         skus: [
           { skuCode: 'SKU-PWR-GRAY', color: 'Gray', prices: { USD: 39.99, CNY: 279 }, stock: 300 },
@@ -180,7 +226,7 @@ export class SeedService implements OnModuleInit {
         title: { zh: 'USB-C 编织数据线', en: 'USB-C Braided Cable' },
         description: 'Durable braided charging cable',
         categoryId: accessories?.id ?? null,
-        mainImage: 'https://picsum.photos/seed/cb-cable/600/600',
+        mainImage: catalogImage('spu-cable-001.svg'),
         salesCount: 4520,
         skus: [
           { skuCode: 'SKU-CBL-1M', color: 'Black', prices: { USD: 12.99, CNY: 89 }, stock: 500 },
@@ -192,7 +238,7 @@ export class SeedService implements OnModuleInit {
         title: { zh: '磁吸手机保护壳', en: 'MagSafe Phone Case' },
         description: 'Slim protective phone case',
         categoryId: accessories?.id ?? null,
-        mainImage: 'https://picsum.photos/seed/cb-case/600/600',
+        mainImage: catalogImage('spu-case-001.svg'),
         salesCount: 318,
         skus: [
           { skuCode: 'SKU-CASE-CL', color: 'Clear', prices: { USD: 24.99, CNY: 169 }, stock: 250 },
@@ -236,7 +282,13 @@ export class SeedService implements OnModuleInit {
         );
       } else {
         const patch: Partial<Product> = {};
+        const needsImageRefresh = (current?: string | null) =>
+          !current || /picsum\.photos|images\.unsplash\.com/i.test(current);
+
         if (!product.mainImage && item.mainImage) patch.mainImage = item.mainImage;
+        if (item.mainImage && needsImageRefresh(product.mainImage)) {
+          patch.mainImage = item.mainImage;
+        }
         if (product.categoryId == null && item.categoryId) patch.categoryId = item.categoryId;
         if (!product.salesCount && item.salesCount) patch.salesCount = item.salesCount;
         if (Object.keys(patch).length) {

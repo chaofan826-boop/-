@@ -1,9 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { isAdminRole } from '../common/constants/user-roles';
 import { hasAdminPermission } from '../common/constants/admin-permissions';
-import { UserRole } from '../user/entities/user.entity';
+import { User, UserRole } from '../user/entities/user.entity';
 import { CreateQuickReplyDto } from './dto/create-quick-reply.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateQuickReplyDto } from './dto/update-quick-reply.dto';
@@ -12,6 +12,8 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { ChatQuickReply, QuickReplyStatus } from './entities/chat-quick-reply.entity';
 
 type AuthUser = { id: number; role: UserRole; permissions?: string[] | null };
+
+const RECALL_WINDOW_MS = 2 * 60 * 1000;
 
 @Injectable()
 export class ChatService {
@@ -22,6 +24,8 @@ export class ChatService {
     private readonly messageRepository: Repository<ChatMessage>,
     @InjectRepository(ChatQuickReply)
     private readonly quickReplyRepository: Repository<ChatQuickReply>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {}
 
   async getOrCreateCustomerConversation(customerId: number) {
@@ -70,11 +74,29 @@ export class ChatService {
     return { total };
   }
 
-  async listConversations() {
-    const conversations = await this.conversationRepository.find({
-      relations: { customer: true },
-      order: { lastMessageAt: 'DESC', id: 'DESC' },
-    });
+  async listConversations(keyword?: string) {
+    const trimmed = keyword?.trim();
+    const qb = this.conversationRepository
+      .createQueryBuilder('conversation')
+      .leftJoinAndSelect('conversation.customer', 'customer')
+      .orderBy('conversation.lastMessageAt', 'DESC')
+      .addOrderBy('conversation.id', 'DESC');
+
+    if (trimmed) {
+      if (/^\d+$/.test(trimmed)) {
+        qb.andWhere(
+          '(customer.id = :id OR customer.name LIKE :kw OR customer.email LIKE :kw OR customer.phone LIKE :kw)',
+          { id: Number(trimmed), kw: `%${trimmed}%` },
+        );
+      } else {
+        qb.andWhere(
+          '(customer.name LIKE :kw OR customer.email LIKE :kw OR customer.phone LIKE :kw)',
+          { kw: `%${trimmed}%` },
+        );
+      }
+    }
+
+    const conversations = await qb.getMany();
 
     const ids = conversations.map((item) => item.id);
     const lastMessages = ids.length ? await this.loadLastMessages(ids) : new Map<number, ChatMessage>();
@@ -86,6 +108,105 @@ export class ChatService {
         lastMessages.get(conversation.id) ?? null,
         unreadMap.get(conversation.id) ?? 0,
       ),
+    );
+  }
+
+  async searchCustomers(keyword: string) {
+    const trimmed = keyword.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .where('user.role = :role', { role: UserRole.CUSTOMER })
+      .orderBy('user.id', 'DESC')
+      .take(20);
+
+    if (/^\d+$/.test(trimmed)) {
+      qb.andWhere(
+        '(user.id = :id OR user.name LIKE :kw OR user.email LIKE :kw OR user.phone LIKE :kw)',
+        { id: Number(trimmed), kw: `%${trimmed}%` },
+      );
+    } else {
+      qb.andWhere('(user.name LIKE :kw OR user.email LIKE :kw OR user.phone LIKE :kw)', {
+        kw: `%${trimmed}%`,
+      });
+    }
+
+    const customers = await qb.getMany();
+    if (!customers.length) {
+      return [];
+    }
+
+    const customerIds = customers.map((customer) => customer.id);
+    const conversations = await this.conversationRepository.find({
+      where: { customerId: In(customerIds) },
+      relations: { customer: true },
+      order: { id: 'DESC' },
+    });
+
+    const conversationByCustomer = new Map<number, ChatConversation>();
+    for (const conversation of conversations) {
+      const existing = conversationByCustomer.get(conversation.customerId);
+      if (!existing || conversation.id > existing.id) {
+        conversationByCustomer.set(conversation.customerId, conversation);
+      }
+    }
+
+    const conversationIds = [...conversationByCustomer.values()].map((item) => item.id);
+    const unreadMap = conversationIds.length
+      ? await this.loadUnreadCounts(conversationIds)
+      : new Map<number, number>();
+
+    return customers.map((customer) => {
+      const conversation = conversationByCustomer.get(customer.id) ?? null;
+      return {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        conversationId: conversation?.id ?? null,
+        unreadCount: conversation ? unreadMap.get(conversation.id) ?? 0 : 0,
+      };
+    });
+  }
+
+  async getOrCreateConversationForCustomer(customerId: number) {
+    const customer = await this.userRepository.findOne({ where: { id: customerId } });
+    if (!customer || customer.role !== UserRole.CUSTOMER) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    let conversation = await this.conversationRepository.findOne({
+      where: { customerId, status: ConversationStatus.OPEN },
+      relations: { customer: true },
+      order: { id: 'DESC' },
+    });
+
+    if (!conversation) {
+      conversation = await this.conversationRepository.save(
+        this.conversationRepository.create({
+          customerId,
+          status: ConversationStatus.OPEN,
+        }),
+      );
+      conversation = await this.conversationRepository.findOne({
+        where: { id: conversation.id },
+        relations: { customer: true },
+      });
+    }
+
+    const lastMessage = await this.messageRepository.findOne({
+      where: { conversationId: conversation!.id },
+      order: { id: 'DESC' },
+    });
+    const unreadCount = await this.loadUnreadCounts([conversation!.id]);
+
+    return this.toConversationView(
+      conversation!,
+      lastMessage,
+      unreadCount.get(conversation!.id) ?? 0,
     );
   }
 
@@ -102,13 +223,22 @@ export class ChatService {
       order: { id: 'ASC' },
     });
 
+    const replyMap = await this.loadReplyMessageMap(messages);
+
+    const readState = {
+      adminLastReadMessageId: conversation.adminLastReadMessageId,
+      customerLastReadMessageId: conversation.customerLastReadMessageId,
+    };
+
+    const views = messages.map((message) => this.toMessageView(message, readState, replyMap));
+
     if (isAdminRole(user.role)) {
       await this.markAdminConversationRead(conversation.id);
     } else if (user.role === UserRole.CUSTOMER) {
       await this.markCustomerConversationRead(conversation.id);
     }
 
-    return messages.map((message) => this.toMessageView(message));
+    return views;
   }
 
   async sendMessage(conversationId: number, user: AuthUser, dto: SendMessageDto) {
@@ -122,12 +252,22 @@ export class ChatService {
       throw new ForbiddenException('Access denied');
     }
 
+    if (dto.replyToMessageId) {
+      const replyTarget = await this.messageRepository.findOne({
+        where: { id: dto.replyToMessageId, conversationId: conversation.id },
+      });
+      if (!replyTarget) {
+        throw new BadRequestException('Reply target message not found');
+      }
+    }
+
     const message = await this.messageRepository.save(
       this.messageRepository.create({
         conversationId: conversation.id,
         senderId: user.id,
         senderRole: isAdminRole(user.role) ? UserRole.ADMIN : user.role,
         content: dto.content.trim(),
+        replyToMessageId: dto.replyToMessageId ?? null,
       }),
     );
 
@@ -135,7 +275,59 @@ export class ChatService {
       lastMessageAt: message.createdAt,
     });
 
-    return this.toMessageView(message);
+    const replyMap = message.replyToMessageId
+      ? await this.loadReplyMessageMap([message])
+      : new Map<number, ChatMessage>();
+
+    return this.toMessageView(message, {
+      adminLastReadMessageId: conversation.adminLastReadMessageId,
+      customerLastReadMessageId: conversation.customerLastReadMessageId,
+    }, replyMap);
+  }
+
+  async recallMessage(conversationId: number, messageId: number, user: AuthUser) {
+    const conversation = await this.ensureConversationAccess(conversationId, user);
+    const message = await this.messageRepository.findOne({
+      where: { id: messageId, conversationId: conversation.id },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message not found');
+    }
+
+    if (message.isRecalled) {
+      throw new BadRequestException('Message already recalled');
+    }
+
+    if (message.senderId !== user.id) {
+      throw new ForbiddenException('Only the sender can recall this message');
+    }
+
+    if (user.role === UserRole.CUSTOMER && message.senderRole !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    if (isAdminRole(user.role) && !isAdminRole(message.senderRole)) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    const elapsed = Date.now() - message.createdAt.getTime();
+    if (elapsed > RECALL_WINDOW_MS) {
+      throw new BadRequestException('Recall window expired');
+    }
+
+    message.isRecalled = true;
+    message.recalledAt = new Date();
+    const saved = await this.messageRepository.save(message);
+
+    const replyMap = saved.replyToMessageId
+      ? await this.loadReplyMessageMap([saved])
+      : new Map<number, ChatMessage>();
+
+    return this.toMessageView(saved, {
+      adminLastReadMessageId: conversation.adminLastReadMessageId,
+      customerLastReadMessageId: conversation.customerLastReadMessageId,
+    }, replyMap);
   }
 
   listQuickReplies() {
@@ -297,15 +489,17 @@ export class ChatService {
       customerId: conversation.customerId,
       customerName: conversation.customer?.name ?? null,
       customerEmail: conversation.customer?.email ?? null,
+      customerPhone: conversation.customer?.phone ?? null,
       status: conversation.status,
       lastMessageAt: conversation.lastMessageAt?.toISOString() ?? null,
       unreadCount,
       lastMessage: lastMessage
         ? {
             id: lastMessage.id,
-            content: lastMessage.content,
+            content: this.toPublicMessageContent(lastMessage),
             senderRole: lastMessage.senderRole,
             createdAt: lastMessage.createdAt.toISOString(),
+            isRecalled: lastMessage.isRecalled,
           }
         : null,
       createdAt: conversation.createdAt.toISOString(),
@@ -313,15 +507,95 @@ export class ChatService {
     };
   }
 
-  private toMessageView(message: ChatMessage) {
+  private async loadReplyMessageMap(messages: ChatMessage[]) {
+    const replyIds = [...new Set(
+      messages
+        .map((message) => message.replyToMessageId)
+        .filter((id): id is number => typeof id === 'number'),
+    )];
+
+    if (!replyIds.length) {
+      return new Map<number, ChatMessage>();
+    }
+
+    const replyMessages = await this.messageRepository.find({
+      where: { id: In(replyIds) },
+    });
+
+    return new Map(replyMessages.map((message) => [message.id, message]));
+  }
+
+  private toReplyView(message: ChatMessage | undefined | null) {
+    if (!message) {
+      return null;
+    }
+
+    return {
+      id: message.id,
+      senderId: message.senderId,
+      senderRole: message.senderRole,
+      content: this.toPublicMessageContent(message),
+      isRecalled: message.isRecalled,
+      createdAt: message.createdAt.toISOString(),
+    };
+  }
+
+  private toPublicMessageContent(message: ChatMessage) {
+    if (message.isRecalled) {
+      return '';
+    }
+    return message.content;
+  }
+
+  private toMessageView(
+    message: ChatMessage,
+    readState?: {
+      adminLastReadMessageId: number | null;
+      customerLastReadMessageId: number | null;
+    },
+    replyMap: Map<number, ChatMessage> = new Map(),
+  ) {
     return {
       id: message.id,
       conversationId: message.conversationId,
       senderId: message.senderId,
       senderRole: message.senderRole,
-      content: message.content,
+      content: this.toPublicMessageContent(message),
+      replyToMessageId: message.replyToMessageId,
+      replyTo: this.toReplyView(
+        message.replyToMessageId ? replyMap.get(message.replyToMessageId) : null,
+      ),
+      isRecalled: message.isRecalled,
+      recalledAt: message.recalledAt?.toISOString() ?? null,
       createdAt: message.createdAt.toISOString(),
+      isRead: this.isMessageReadByRecipient(message, readState),
     };
+  }
+
+  private isMessageReadByRecipient(
+    message: ChatMessage,
+    readState?: {
+      adminLastReadMessageId: number | null;
+      customerLastReadMessageId: number | null;
+    },
+  ) {
+    if (!readState) return false;
+
+    if (message.senderRole === UserRole.CUSTOMER) {
+      return (
+        readState.adminLastReadMessageId != null &&
+        message.id <= readState.adminLastReadMessageId
+      );
+    }
+
+    if (isAdminRole(message.senderRole)) {
+      return (
+        readState.customerLastReadMessageId != null &&
+        message.id <= readState.customerLastReadMessageId
+      );
+    }
+
+    return false;
   }
 
   private toQuickReplyView(item: ChatQuickReply) {

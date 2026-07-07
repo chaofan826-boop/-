@@ -1,25 +1,27 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getOrder, type Order } from '@/api/order'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { getOrder, payOrder, cancelOrder, deleteOrder, type Order } from '@/api/order'
+import OrderStatusBadge from '@/components/OrderStatusBadge.vue'
+import PaymentMethodPicker from '@/components/PaymentMethodPicker.vue'
+import PendingPayCountdown from '@/components/PendingPayCountdown.vue'
 import { trackShipping, type ShippingTrack } from '@/api/shipping'
 import { useAppStore } from '@/stores/app'
+import { DEFAULT_PAYMENT_METHOD, paymentMethodLabel, type PaymentMethod } from '@/utils/payment-method'
+import { canUserDeleteOrder, orderStatusLabel } from '@/utils/order-status'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 
 const loading = ref(false)
+const paying = ref(false)
+const deleting = ref(false)
+const cancelling = ref(false)
+const paymentMethod = ref<PaymentMethod>(DEFAULT_PAYMENT_METHOD)
 const order = ref<Order | null>(null)
 const shipping = ref<ShippingTrack | null>(null)
-
-const statusMap: Record<string, string> = {
-  pending: '待支付',
-  paid: '已支付',
-  shipped: '已发货',
-  completed: '已完成',
-  cancelled: '已取消',
-}
 
 const shippingStatusMap: Record<string, string> = {
   in_transit: '运输中',
@@ -56,6 +58,92 @@ async function loadData() {
   }
 }
 
+async function handlePay() {
+  if (!order.value || order.value.status !== 'pending') return
+
+  try {
+    await ElMessageBox.confirm(
+      `使用${paymentMethodLabel(paymentMethod.value)}支付 ${appStore.formatPrice(Number(order.value.totalAmount))}？`,
+      '确认支付',
+      {
+        confirmButtonText: '立即支付',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  paying.value = true
+  try {
+    order.value = await payOrder(order.value.orderNo, paymentMethod.value)
+    ElMessage.success(`已使用${paymentMethodLabel(order.value.paymentMethod)}支付成功`)
+  } finally {
+    paying.value = false
+  }
+}
+
+async function handleCancel() {
+  if (!order.value || order.value.status !== 'pending') return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定取消待支付订单 ${order.value.orderNo}？取消后库存将释放。`,
+      '取消订单',
+      {
+        type: 'warning',
+        confirmButtonText: '取消订单',
+        cancelButtonText: '再想想',
+      },
+    )
+  } catch {
+    return
+  }
+
+  cancelling.value = true
+  try {
+    order.value = await cancelOrder(order.value.orderNo)
+    ElMessage.success('订单已取消')
+  } finally {
+    cancelling.value = false
+  }
+}
+
+async function handlePendingExpired() {
+  await loadData()
+  if (order.value?.status === 'cancelled') {
+    ElMessage.warning('订单支付超时，已自动取消')
+  }
+}
+
+async function handleDelete() {
+  if (!order.value || !canUserDeleteOrder(order.value.status)) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除${orderStatusLabel(order.value.status)}订单 ${order.value.orderNo}？删除后无法恢复。`,
+      '删除订单',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  deleting.value = true
+  try {
+    await deleteOrder(order.value.orderNo)
+    ElMessage.success('订单已删除')
+    router.push('/orders')
+  } finally {
+    deleting.value = false
+  }
+}
+
 onMounted(loadData)
 </script>
 
@@ -74,7 +162,7 @@ onMounted(loadData)
         </div>
         <div class="info-row">
           <span class="label">订单状态</span>
-          <el-tag>{{ statusMap[order.status] || order.status }}</el-tag>
+          <OrderStatusBadge :status="order.status" />
         </div>
         <div class="info-row">
           <span class="label">下单时间</span>
@@ -88,6 +176,10 @@ onMounted(loadData)
           <span class="label">订单金额</span>
           <span class="amount">{{ appStore.formatPrice(Number(order.totalAmount)) }}</span>
         </div>
+        <div v-if="order.paymentMethod" class="info-row">
+          <span class="label">支付方式</span>
+          <span>{{ paymentMethodLabel(order.paymentMethod) }}</span>
+        </div>
       </el-card>
 
       <el-card shadow="never" class="items-card">
@@ -95,6 +187,32 @@ onMounted(loadData)
         <div v-for="item in order.items" :key="item.id" class="order-item">
           <span>{{ item.product?.title?.zh || '商品' }} × {{ item.quantity }}</span>
           <span>{{ appStore.formatPrice(Number(item.price) * item.quantity) }}</span>
+        </div>
+      </el-card>
+
+      <el-card v-if="order.status === 'pending'" shadow="never" class="action-card">
+        <PendingPayCountdown :order="order" @expired="handlePendingExpired" />
+        <PaymentMethodPicker v-model="paymentMethod" class="pending-payment-picker" />
+        <div class="pay-bar">
+          <div class="pay-info">
+            <span class="pay-label">待支付金额</span>
+            <strong class="pay-amount">{{ appStore.formatPrice(Number(order.totalAmount)) }}</strong>
+          </div>
+          <div class="pending-actions">
+            <el-button size="large" :loading="cancelling" @click="handleCancel">取消订单</el-button>
+            <el-button type="primary" size="large" :loading="paying" @click="handlePay">
+              立即支付
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+
+      <el-card v-if="canUserDeleteOrder(order.status)" shadow="never" class="action-card">
+        <div class="delete-bar">
+          <p class="delete-tip">此订单已结束，可从列表中删除记录</p>
+          <el-button type="danger" plain size="large" :loading="deleting" @click="handleDelete">
+            删除订单
+          </el-button>
         </div>
       </el-card>
 
@@ -171,9 +289,65 @@ onMounted(loadData)
 
 .info-card,
 .items-card,
+.action-card,
 .shipping-card {
   margin-bottom: 16px;
   border-radius: var(--cb-radius);
+}
+
+.pay-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--cb-border);
+}
+
+.pending-payment-picker {
+  margin-top: 16px;
+}
+
+.pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.delete-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.delete-tip {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cb-text-muted);
+}
+
+.pay-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pay-label {
+  font-size: 12px;
+  color: var(--cb-text-muted);
+  letter-spacing: 0.08em;
+}
+
+.pay-amount {
+  font-family: var(--cb-font-display);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--cb-accent);
 }
 
 .info-row {

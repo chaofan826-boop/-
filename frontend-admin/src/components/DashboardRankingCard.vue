@@ -31,6 +31,7 @@ const chartHeight = computed(() => Math.max(360, ranking.value.length * 56 + 48)
 const sortedRanking = computed(() => [...ranking.value].sort((a, b) => a.rank - b.rank))
 
 function formatQueryDate(date: Date, currentPeriod: HotProductsPeriod) {
+  if (currentPeriod === 'all') return undefined
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
@@ -192,10 +193,11 @@ function handleResize() {
 async function loadRanking() {
   loading.value = true
   try {
+    const date = formatQueryDate(props.selectedDate, props.period)
     const res = await getHotProducts({
       period: props.period,
       sortBy: props.metric,
-      date: formatQueryDate(props.selectedDate, props.period),
+      ...(date ? { date } : {}),
     })
     ranking.value = res.list
     rankingDate.value = res.date
@@ -317,11 +319,17 @@ onUnmounted(() => {
 
 .ranking-legend {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid var(--cb-border);
+}
+
+@media (min-width: 1600px) {
+  .ranking-legend {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }
 
 .legend-item {

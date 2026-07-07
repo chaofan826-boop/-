@@ -14,6 +14,7 @@ import { AdminRoles } from '../auth/admin-roles.decorator';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { BannerService } from './banner.service';
+import { BatchDeleteDto } from '../common/dto/batch-delete.dto';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { QueryBannerDto } from './dto/query-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
@@ -63,6 +64,14 @@ export class BannerController {
   @Post('update')
   update(@Body() dto: UpdateBannerDto) {
     return this.bannerService.update(dto);
+  }
+
+  @UseGuards(RolesGuard)
+  @AdminRoles()
+  @RequirePermissions('banners')
+  @Post('batch-delete')
+  batchRemove(@Body() dto: BatchDeleteDto) {
+    return this.bannerService.removeMany(dto.ids);
   }
 
   @Public()

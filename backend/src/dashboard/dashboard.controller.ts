@@ -4,6 +4,7 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { DashboardService } from './dashboard.service';
 import { HotProductsQueryDto } from './dto/hot-products-query.dto';
+import { OrderTrendsQueryDto } from './dto/order-trends-query.dto';
 
 @Controller('dashboard')
 @UseGuards(RolesGuard)
@@ -20,5 +21,10 @@ export class DashboardController {
   @Get('hot-products')
   getHotProducts(@Query() query: HotProductsQueryDto) {
     return this.dashboardService.getHotProducts(query);
+  }
+
+  @Get('order-trends')
+  getOrderTrends(@Query() query: OrderTrendsQueryDto) {
+    return this.dashboardService.getOrderTrends(query);
   }
 }

@@ -86,4 +86,28 @@ export class UploadController {
     this.uploadService.validateBannerFile(file);
     return { url: this.uploadService.toBannerPublicUrl(file.filename) };
   }
+
+  @Post('chat')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          cb(null, join(process.cwd(), 'uploads', 'chat'));
+        },
+        filename: (req, file, cb) => {
+          const userId = (req as { user?: { id: number } }).user?.id ?? 0;
+          cb(null, UploadService.buildChatFilename(userId, file.originalname));
+        },
+      }),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  uploadChat(
+    @Request() req: { user: { id: number } },
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    this.uploadService.validateChatFile(file);
+    return { url: this.uploadService.toChatPublicUrl(file.filename) };
+  }
 }

@@ -61,13 +61,66 @@ export class DashboardService {
     };
   }
 
+  async getOrderTrends(query: { startDate?: string; endDate?: string } = {}) {
+    const range = this.resolveTrendRange(query.startDate, query.endDate);
+
+    const rows = await this.orderRepository
+      .createQueryBuilder('order')
+      .innerJoin('order.user', 'user')
+      .select('DATE(order.created_at)', 'day')
+      .addSelect('COUNT(DISTINCT order.user_id)', 'orderUserCount')
+      .addSelect('COUNT(order.id)', 'orderCount')
+      .addSelect('COALESCE(SUM(order.total_amount), 0)', 'orderAmount')
+      .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
+      .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
+      .andWhere('order.created_at >= :start', { start: range.start })
+      .andWhere('order.created_at < :end', { end: range.end })
+      .groupBy('DATE(order.created_at)')
+      .orderBy('day', 'ASC')
+      .getRawMany<{ day: string | Date; orderUserCount: string; orderCount: string; orderAmount: string }>();
+
+    const rowMap = new Map<string, { orderUserCount: number; orderCount: number; orderAmount: number }>();
+    for (const row of rows) {
+      const dayKey = this.normalizeDayKey(row.day);
+      rowMap.set(dayKey, {
+        orderUserCount: Number(row.orderUserCount),
+        orderCount: Number(row.orderCount),
+        orderAmount: Number(Number(row.orderAmount).toFixed(2)),
+      });
+    }
+
+    const dayCount = this.countDaysInclusive(range.start, range.end);
+    const useShortLabel = dayCount > 31;
+
+    const days = Array.from({ length: dayCount }, (_, index) => {
+      const date = new Date(range.start);
+      date.setDate(date.getDate() + index);
+      const dateLabel = this.formatDay(date);
+      const metrics = rowMap.get(dateLabel) ?? { orderUserCount: 0, orderCount: 0, orderAmount: 0 };
+      return {
+        date: dateLabel,
+        label: useShortLabel ? dateLabel.slice(5) : dateLabel,
+        orderUserCount: metrics.orderUserCount,
+        orderCount: metrics.orderCount,
+        orderAmount: metrics.orderAmount,
+      };
+    });
+
+    return {
+      startDate: range.start.toISOString(),
+      endDate: range.end.toISOString(),
+      label: range.label,
+      days,
+    };
+  }
+
   async getHotProducts(query: HotProductsQueryDto) {
     const period = query.period ?? HotProductsPeriod.DAY;
     const sortBy = query.sortBy ?? HotProductsSortBy.QUANTITY;
     const range = this.resolveDateRange(period, query.date);
     const orderField = sortBy === HotProductsSortBy.REVENUE ? 'revenue' : 'quantitySold';
 
-    const rows = await this.orderItemRepository
+    const rowsQuery = this.orderItemRepository
       .createQueryBuilder('item')
       .innerJoin('item.order', 'order')
       .innerJoin('order.user', 'user')
@@ -76,9 +129,15 @@ export class DashboardService {
       .addSelect('SUM(item.quantity)', 'quantitySold')
       .addSelect('SUM(item.quantity * item.price)', 'revenue')
       .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-      .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
-      .andWhere('order.created_at >= :start', { start: range.start })
-      .andWhere('order.created_at < :end', { end: range.end })
+      .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES });
+
+    if (period !== HotProductsPeriod.ALL) {
+      rowsQuery
+        .andWhere('order.created_at >= :start', { start: range.start })
+        .andWhere('order.created_at < :end', { end: range.end });
+    }
+
+    const rows = await rowsQuery
       .groupBy('item.product_id')
       .orderBy(orderField, 'DESC')
       .limit(10)
@@ -116,6 +175,50 @@ export class DashboardService {
     };
   }
 
+  private resolveTrendRange(startDate?: string, endDate?: string): DateRange {
+    const now = new Date();
+
+    if (!startDate && !endDate) {
+      const end = this.parseDayStart(this.formatDay(now));
+      end.setDate(end.getDate() + 1);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 7);
+      const labelStart = this.formatDay(new Date(end.getTime() - 86400000 * 7));
+      const labelEnd = this.formatDay(new Date(end.getTime() - 86400000));
+      return { start, end, label: `${labelStart} ~ ${labelEnd}` };
+    }
+
+    if (!startDate || !endDate) {
+      throw new BadRequestException('startDate and endDate must be provided together');
+    }
+
+    this.assertDayFormat(startDate);
+    this.assertDayFormat(endDate);
+
+    const start = this.parseDayStart(startDate);
+    const endDay = this.parseDayStart(endDate);
+    if (start.getTime() > endDay.getTime()) {
+      throw new BadRequestException('startDate must be before or equal to endDate');
+    }
+
+    const end = new Date(endDay);
+    end.setDate(end.getDate() + 1);
+
+    const dayCount = this.countDaysInclusive(start, end);
+    if (dayCount > 366) {
+      throw new BadRequestException('Date range must not exceed 366 days');
+    }
+
+    return { start, end, label: `${startDate} ~ ${endDate}` };
+  }
+
+  private countDaysInclusive(start: Date, endExclusive: Date) {
+    const startDay = this.parseDayStart(this.formatDay(start));
+    const endDay = this.parseDayStart(this.formatDay(new Date(endExclusive.getTime() - 86400000)));
+    const diffMs = endDay.getTime() - startDay.getTime();
+    return Math.floor(diffMs / 86400000) + 1;
+  }
+
   private resolveProductImage(product?: Product | null): string | null {
     if (!product) return null;
     if (product.mainImage) return product.mainImage;
@@ -125,6 +228,12 @@ export class DashboardService {
 
   private resolveDateRange(period: HotProductsPeriod, date?: string): DateRange {
     const now = new Date();
+
+    if (period === HotProductsPeriod.ALL) {
+      const end = this.parseDayStart(this.formatDay(now));
+      end.setDate(end.getDate() + 1);
+      return { start: new Date(0), end, label: '全部' };
+    }
 
     if (period === HotProductsPeriod.DAY) {
       const label = date ?? this.formatDay(now);
@@ -157,6 +266,13 @@ export class DashboardService {
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+  }
+
+  private normalizeDayKey(value: string | Date) {
+    if (value instanceof Date) {
+      return this.formatDay(value);
+    }
+    return value.slice(0, 10);
   }
 
   private formatMonth(date: Date) {

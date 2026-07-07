@@ -1,4 +1,6 @@
-import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Request, UseGuards } from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
+import { getRequestMeta } from '../audit/utils/request-meta.util';
 import { AuthService } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -19,14 +21,14 @@ export class AuthController {
 
   @Public()
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Req() req: ExpressRequest) {
+    return this.authService.login(dto, getRequestMeta(req));
   }
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
-  logout(@Request() req: { user: { id: number } }) {
-    return this.authService.logout(req.user.id);
+  logout(@Request() req: { user: { id: number } }, @Req() expressReq: ExpressRequest) {
+    return this.authService.logout(req.user.id, getRequestMeta(expressReq));
   }
 
   @Get('me')

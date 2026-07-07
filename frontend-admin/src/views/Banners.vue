@@ -4,15 +4,33 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import type { UploadRequestOptions } from 'element-plus'
-import { createBanner, deleteBanner, getBannerSettings, getBanners, updateBanner, updateBannerSettings, updateBannerStatus } from '@/api/banner'
+import {
+  batchDeleteBanners,
+  createBanner,
+  deleteBanner,
+  getBannerSettings,
+  getBanners,
+  updateBanner,
+  updateBannerSettings,
+  updateBannerStatus,
+} from '@/api/banner'
 import { uploadBannerImage } from '@/api/upload'
+import BannerHeroThumb from '@/components/BannerHeroThumb.vue'
+import {
+  confirmBatchDelete,
+  showBatchDeleteResult,
+  useTableSelection,
+} from '@/composables/useTableSelection'
 import { useUserStore } from '@/stores/user'
+import { isHeroBanner, resolveMediaUrl } from '@/utils/media'
 import type { Banner, BannerStatus } from '@/types/banner'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const loading = ref(false)
+const tableRef = ref<{ clearSelection: () => void }>()
+const batchDeleting = ref(false)
 const banners = ref<Banner[]>([])
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增轮播图')
@@ -22,6 +40,12 @@ const imageUploading = ref(false)
 const statusLoadingId = ref<number | null>(null)
 const settingsLoading = ref(false)
 const carouselEnabled = ref(true)
+const {
+  selectedIds,
+  hasSelection,
+  handleSelectionChange,
+  clearSelection,
+} = useTableSelection<Banner>()
 
 const filterStatus = ref<BannerStatus | ''>('')
 
@@ -179,6 +203,27 @@ async function handleDelete(row: Banner) {
   await loadBanners()
 }
 
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) return
+
+  try {
+    await confirmBatchDelete(selectedIds.value.length, '张轮播图')
+  } catch {
+    return
+  }
+
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteBanners(selectedIds.value)
+    showBatchDeleteResult(result, '张轮播图')
+    tableRef.value?.clearSelection()
+    clearSelection()
+    await loadBanners()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 async function handleStatusToggle(row: Banner, visible: boolean) {
   const nextStatus: BannerStatus = visible ? 'active' : 'inactive'
   if (row.status === nextStatus) return
@@ -209,7 +254,18 @@ onMounted(async () => {
         <p class="page-tag">轮播图</p>
         <h2 class="page-title">轮播图管理</h2>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新增轮播图</el-button>
+      <div class="toolbar-actions">
+        <el-button
+          type="danger"
+          plain
+          :disabled="!hasSelection"
+          :loading="batchDeleting"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ hasSelection ? ` (${selectedIds.length})` : '' }}
+        </el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新增轮播图</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" class="master-switch-card">
@@ -249,11 +305,22 @@ onMounted(async () => {
     </el-card>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="banners" :row-class-name="rowClassName" stripe>
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="banners"
+        row-key="id"
+        :row-class-name="rowClassName"
+        stripe
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="图片" width="160">
           <template #default="{ row }">
-            <img :src="row.imageUrl" class="thumb" alt="" />
+            <BannerHeroThumb v-if="isHeroBanner(row)" />
+            <img v-else :src="resolveMediaUrl(row.imageUrl)" class="thumb" alt="" />
+            <el-tag v-if="isHeroBanner(row)" size="small" type="warning" class="hero-tag">全球臻品主题</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="标题" min-width="180">
@@ -304,7 +371,8 @@ onMounted(async () => {
               :before-upload="beforeImageUpload"
               :disabled="imageUploading"
             >
-              <img v-if="form.imageUrl" :src="form.imageUrl" class="banner-preview" alt="轮播图" />
+              <BannerHeroThumb v-if="isHeroBanner({ imageUrl: form.imageUrl })" class="banner-preview-hero" />
+              <img v-else-if="form.imageUrl" :src="resolveMediaUrl(form.imageUrl)" class="banner-preview" alt="轮播图" />
               <div v-else class="upload-placeholder">
                 <el-icon><Plus /></el-icon>
                 <span>上传图片</span>
@@ -371,6 +439,13 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .filter-card {
   margin-bottom: 16px;
 }
@@ -419,6 +494,12 @@ onMounted(async () => {
   border: 1px solid var(--cb-border);
 }
 
+.hero-tag {
+  display: block;
+  margin-top: 6px;
+  width: fit-content;
+}
+
 .image-section {
   display: flex;
   flex-direction: column;
@@ -444,6 +525,29 @@ onMounted(async () => {
   max-width: 420px;
   height: 140px;
   object-fit: cover;
+}
+
+.banner-preview-hero {
+  width: 100%;
+  max-width: 420px;
+  height: 140px;
+  border-radius: 8px;
+}
+
+.banner-preview-hero :deep(.hero-thumb) {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.banner-preview-hero :deep(.hero-thumb-badge) {
+  margin-top: 28px;
+  font-size: 10px;
+}
+
+.banner-preview-hero :deep(.hero-thumb-title) {
+  margin-top: 10px;
+  font-size: 22px;
 }
 
 .upload-placeholder {
