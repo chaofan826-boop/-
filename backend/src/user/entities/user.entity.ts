@@ -8,9 +8,11 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Order } from '../../order/entities/order.entity';
+import type { AdminPermission } from '../../common/constants/admin-permissions';
 
 export enum UserRole {
   ADMIN = 'admin',
+  SUB_ADMIN = 'sub_admin',
   CUSTOMER = 'customer',
 }
 
@@ -41,6 +43,9 @@ export class User {
 
   @Column({ type: 'enum', enum: UserRole, default: UserRole.CUSTOMER })
   role: UserRole;
+
+  @Column({ type: 'json', nullable: true })
+  permissions: AdminPermission[] | null;
 
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;

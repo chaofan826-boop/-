@@ -7,6 +7,7 @@ export interface UserInfo {
   name: string
   avatar: string | null
   role: string
+  permissions?: import('@/constants/permissions').AdminPermission[] | null
 }
 
 export interface UpdateProfilePayload {

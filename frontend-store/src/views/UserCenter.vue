@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 
 import { ElMessage, ElMessageBox, type UploadRequestOptions } from 'element-plus'
 
-import { Camera, List, SwitchButton } from '@element-plus/icons-vue'
+import { Camera, Clock, List, SwitchButton } from '@element-plus/icons-vue'
 
 import { changePassword } from '@/api/auth'
 
@@ -248,6 +248,16 @@ onMounted(async () => {
             <el-icon><List /></el-icon>
 
             <span>我的订单</span>
+
+          </button>
+
+
+
+          <button type="button" class="orders-link" @click="router.push('/browse-history')">
+
+            <el-icon><Clock /></el-icon>
+
+            <span>浏览记录</span>
 
           </button>
 

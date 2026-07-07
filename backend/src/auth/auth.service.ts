@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { RedisService } from '../common/redis/redis.service';
 import { validatePhoneForRegion, normalizePhone } from '../common/utils/phone.util';
+import type { AdminPermission } from '../common/constants/admin-permissions';
 import { UserRole, UserStatus } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
 import { LoginDto } from './dto/login.dto';
@@ -30,6 +31,7 @@ export interface AuthTokenResult {
     name: string;
     avatar: string | null;
     role: UserRole;
+    permissions: AdminPermission[] | null;
   };
 }
 
@@ -109,6 +111,7 @@ export class AuthService {
     name: string;
     avatar?: string | null;
     role: UserRole;
+    permissions?: AdminPermission[] | null;
   }): Promise<AuthTokenResult> {
     const payload: JwtPayload = {
       sub: user.id,
@@ -134,6 +137,7 @@ export class AuthService {
         name: user.name,
         avatar: user.avatar ?? null,
         role: user.role,
+        permissions: user.permissions ?? null,
       },
     };
   }

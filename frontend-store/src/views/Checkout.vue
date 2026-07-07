@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createOrder } from '@/api/order'
@@ -10,6 +10,9 @@ const router = useRouter()
 const appStore = useAppStore()
 const cartStore = useCartStore()
 const loading = ref(false)
+
+const checkoutItems = computed(() => cartStore.selectedItems)
+const checkoutTotal = computed(() => cartStore.selectedTotal)
 
 const form = reactive({
   receiverName: '',
@@ -22,8 +25,8 @@ async function handleSubmit() {
     ElMessage.warning('请填写完整收货信息')
     return
   }
-  if (!cartStore.items.length) {
-    ElMessage.warning('购物车为空')
+  if (!checkoutItems.value.length) {
+    ElMessage.warning('请先选择要结算的商品')
     router.push('/cart')
     return
   }
@@ -34,13 +37,13 @@ async function handleSubmit() {
   try {
     await createOrder({
       shippingAddress,
-      items: cartStore.items.map((i) => ({
+      items: checkoutItems.value.map((i) => ({
         productSkuId: i.productSkuId,
         quantity: i.quantity,
         currency: i.currency,
       })),
     })
-    cartStore.clear()
+    cartStore.removeSelectedItems()
     ElMessage.success('下单成功！')
     router.push('/orders')
   } finally {
@@ -50,6 +53,10 @@ async function handleSubmit() {
 
 onMounted(() => {
   cartStore.refreshPrices(appStore.currency).catch(() => undefined)
+  if (!cartStore.selectedItems.length) {
+    ElMessage.warning('请先选择要结算的商品')
+    router.replace('/cart')
+  }
 })
 </script>
 
@@ -83,14 +90,14 @@ onMounted(() => {
       <el-col :xs="24" :md="10">
         <el-card shadow="never" class="section-card order-summary">
           <template #header><span>订单摘要</span></template>
-          <div v-for="item in cartStore.items" :key="item.productSkuId" class="summary-item">
+          <div v-for="item in checkoutItems" :key="item.productSkuId" class="summary-item">
             <span class="name">{{ item.title }} × {{ item.quantity }}</span>
             <span>{{ appStore.formatPrice(item.price * item.quantity) }}</span>
           </div>
           <el-divider />
           <div class="summary-total">
             <span>应付总额</span>
-            <span class="amount">{{ appStore.formatPrice(cartStore.total) }}</span>
+            <span class="amount">{{ appStore.formatPrice(checkoutTotal) }}</span>
           </div>
           <el-button type="primary" size="large" :loading="loading" style="width: 100%; margin-top: 20px" @click="handleSubmit">
             提交订单

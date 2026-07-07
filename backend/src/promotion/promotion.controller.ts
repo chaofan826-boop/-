@@ -1,8 +1,8 @@
 import { Controller, Get, Param, ParseIntPipe, Post, Body, Delete, Query, UseGuards } from '@nestjs/common';
 import { Public } from '../auth/public.decorator';
-import { Roles } from '../auth/roles.decorator';
+import { AdminRoles } from '../auth/admin-roles.decorator';
+import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { UserRole } from '../user/entities/user.entity';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
 import { ProductPricingDto } from './dto/product-pricing.dto';
 import { QueryPromotionDto } from './dto/query-promotion.dto';
@@ -30,14 +30,16 @@ export class PromotionController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('promotions')
   @Post('create')
   create(@Body() dto: CreatePromotionDto) {
     return this.promotionService.create(dto);
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('promotions')
   @Post('update')
   update(@Body() dto: UpdatePromotionDto) {
     return this.promotionService.update(dto);
@@ -50,7 +52,8 @@ export class PromotionController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('promotions')
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.promotionService.remove(id);

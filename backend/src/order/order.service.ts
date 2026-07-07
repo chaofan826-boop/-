@@ -4,6 +4,7 @@ import { DataSource, IsNull, Repository } from 'typeorm';
 import { ProductSku } from '../product/entities/product-sku.entity';
 import { ProductService } from '../product/product.service';
 import { ProductPricingService } from '../promotion/product-pricing.service';
+import { STAFF_ROLES } from '../common/constants/user-roles';
 import { UserRole } from '../user/entities/user.entity';
 import { Shipping } from '../shipping/entities/shipping.entity';
 import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
@@ -112,7 +113,7 @@ export class OrderService implements OnModuleInit {
       .leftJoinAndSelect('order.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('items.productSku', 'productSku')
-      .where('user.role != :adminRole', { adminRole: UserRole.ADMIN })
+      .where('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
       .orderBy('order.created_at', 'DESC')
       .getMany();
   }

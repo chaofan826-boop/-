@@ -30,11 +30,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     await this.userService.assertUserCanAccess(payload.sub);
     await this.userService.touchLastActive(payload.sub);
+    const profile = await this.userService.findAuthProfile(payload.sub);
     return {
       id: payload.sub,
       email: payload.email,
       phone: payload.phone,
       role: payload.role as UserRole,
+      permissions: profile.permissions,
     };
   }
 }

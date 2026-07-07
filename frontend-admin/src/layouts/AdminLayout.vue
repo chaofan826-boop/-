@@ -1,22 +1,55 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { ElMessageBox } from 'element-plus'
 import { getChatUnreadCount } from '@/api/chat'
+import { hasPermission } from '@/constants/permissions'
+import { isSuperAdmin, roleLabel } from '@/constants/roles'
 import { useUserStore } from '@/stores/user'
-import { DataBoard, ChatDotRound, Goods, Menu, Picture, Promotion, ShoppingCart, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { DataBoard, ChatDotRound, Expand, Fold, Goods, Menu, Picture, Promotion, ShoppingCart, SwitchButton, User, UserFilled, Avatar } from '@element-plus/icons-vue'
+import type { AdminPermission } from '@/constants/permissions'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const { user } = storeToRefs(userStore)
+
+const menuItems = [
+  { index: '/dashboard', label: '仪表盘', icon: DataBoard, permission: 'dashboard' as AdminPermission },
+  { index: '/products', label: '商品管理', icon: Goods, permission: 'products' as AdminPermission },
+  { index: '/categories', label: '商品分类', icon: Menu, permission: 'products' as AdminPermission },
+  { index: '/banners', label: '轮播图', icon: Picture, permission: 'banners' as AdminPermission },
+  { index: '/promotions', label: '首页营销', icon: Promotion, permission: 'promotions' as AdminPermission },
+  { index: '/orders', label: '订单管理', icon: ShoppingCart, permission: 'orders' as AdminPermission },
+  { index: '/users', label: '用户管理', icon: UserFilled, permission: 'users' as AdminPermission },
+  { index: '/sub-admins', label: '子管理员', icon: Avatar, superAdminOnly: true },
+  { index: '/chat', label: '客服消息', icon: ChatDotRound, permission: 'chat' as AdminPermission, showBadge: true },
+  { index: '/profile', label: '个人设置', icon: User },
+]
 
 const activeMenu = computed(() => route.path)
 const chatUnreadCount = ref(0)
+const sidebarCollapsed = ref(localStorage.getItem('admin-sidebar-collapsed') === '1')
+const asideWidth = computed(() => (sidebarCollapsed.value ? '72px' : '240px'))
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem('admin-sidebar-collapsed', sidebarCollapsed.value ? '1' : '0')
+}
+const visibleMenuItems = computed(() =>
+  menuItems.filter((item) => {
+    if (item.superAdminOnly) return isSuperAdmin(user.value?.role)
+    if (!item.permission) return true
+    return hasPermission(user.value, item.permission)
+  }),
+)
+const canAccessChat = computed(() => hasPermission(user.value, 'chat'))
 
 let unreadPollTimer: ReturnType<typeof setInterval> | null = null
 
 async function loadChatUnreadCount() {
-  if (!userStore.token) {
+  if (!userStore.token || !canAccessChat.value) {
     chatUnreadCount.value = 0
     return
   }
@@ -42,11 +75,19 @@ function stopUnreadPolling() {
 }
 
 onMounted(async () => {
-  if (userStore.token && !userStore.user) {
+  if (userStore.token && !user.value) {
     await userStore.fetchProfile()
   }
   startUnreadPolling()
 })
+
+watch(
+  () => user.value?.permissions,
+  () => {
+    loadChatUnreadCount()
+  },
+  { deep: true },
+)
 
 onUnmounted(stopUnreadPolling)
 
@@ -74,71 +115,50 @@ async function handleLogout() {
 
 <template>
   <el-container class="layout">
-    <el-aside width="240px" class="aside">
+    <el-aside :width="asideWidth" class="aside" :class="{ collapsed: sidebarCollapsed }">
       <div class="aside-glow" />
       <div class="logo">
         <span class="logo-icon">
           <span class="logo-icon-inner">CB</span>
         </span>
-        <div class="logo-text">
+        <div v-show="!sidebarCollapsed" class="logo-text">
           <span class="logo-title">Admin</span>
           <span class="logo-sub">MANAGEMENT</span>
         </div>
       </div>
       <el-menu
+        :key="user?.id ?? 'guest'"
         :default-active="activeMenu"
+        :collapse="sidebarCollapsed"
+        :collapse-transition="false"
         router
         class="sidebar-menu"
         background-color="transparent"
         text-color="#94a3b8"
         active-text-color="#c9a962"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><DataBoard /></el-icon>
-          <span>仪表盘</span>
-        </el-menu-item>
-        <el-menu-item index="/products">
-          <el-icon><Goods /></el-icon>
-          <span>商品管理</span>
-        </el-menu-item>
-        <el-menu-item index="/categories">
-          <el-icon><Menu /></el-icon>
-          <span>商品分类</span>
-        </el-menu-item>
-        <el-menu-item index="/banners">
-          <el-icon><Picture /></el-icon>
-          <span>轮播图</span>
-        </el-menu-item>
-        <el-menu-item index="/promotions">
-          <el-icon><Promotion /></el-icon>
-          <span>首页营销</span>
-        </el-menu-item>
-        <el-menu-item index="/orders">
-          <el-icon><ShoppingCart /></el-icon>
-          <span>订单管理</span>
-        </el-menu-item>
-        <el-menu-item index="/users">
-          <el-icon><UserFilled /></el-icon>
-          <span>用户管理</span>
-        </el-menu-item>
-        <el-menu-item index="/chat">
-          <el-icon><ChatDotRound /></el-icon>
-          <el-badge
-            :value="chatUnreadCount"
-            :hidden="!chatUnreadCount"
-            :max="99"
-            class="chat-menu-badge"
-          >
-            <span>客服消息</span>
-          </el-badge>
-        </el-menu-item>
-        <el-menu-item index="/profile">
-          <el-icon><User /></el-icon>
-          <span>个人设置</span>
+        <el-menu-item v-for="item in visibleMenuItems" :key="item.index" :index="item.index">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <template #title>
+            <el-badge
+              v-if="item.showBadge"
+              :value="chatUnreadCount"
+              :hidden="!chatUnreadCount"
+              :max="99"
+              class="chat-menu-badge"
+            >
+              <span>{{ item.label }}</span>
+            </el-badge>
+            <span v-else>{{ item.label }}</span>
+          </template>
         </el-menu-item>
       </el-menu>
       <div class="sidebar-footer">
-        <span class="sys-status">
+        <button type="button" class="collapse-btn" @click="toggleSidebar">
+          <el-icon><component :is="sidebarCollapsed ? Expand : Fold" /></el-icon>
+          <span v-show="!sidebarCollapsed">收起侧边栏</span>
+        </button>
+        <span v-show="!sidebarCollapsed" class="sys-status">
           <span class="status-dot" />
           SYSTEM READY
         </span>
@@ -148,16 +168,19 @@ async function handleLogout() {
     <el-container class="main-container">
       <el-header class="header">
         <div class="header-left">
+          <el-tooltip :content="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'" placement="bottom">
+            <el-button class="icon-btn collapse-header-btn" :icon="sidebarCollapsed ? Expand : Fold" circle @click="toggleSidebar" />
+          </el-tooltip>
           <span class="header-title">{{ route.meta.title || '后台管理' }}</span>
         </div>
         <div class="header-right">
           <div class="user-block" @click="router.push('/profile')">
-            <el-avatar :size="36" :src="userStore.user?.avatar || undefined" class="avatar">
-              {{ userStore.user?.name?.[0] || 'A' }}
+            <el-avatar :size="36" :src="user?.avatar || undefined" class="avatar">
+              {{ user?.name?.[0] || 'A' }}
             </el-avatar>
             <div class="user-info">
-              <span class="user-name">{{ userStore.user?.name || '管理员' }}</span>
-              <span class="user-role">{{ userStore.user?.role || 'admin' }}</span>
+              <span class="user-name">{{ user?.name || '管理员' }}</span>
+              <span class="user-role">{{ roleLabel(user?.role || 'admin') }}</span>
             </div>
           </div>
           <el-tooltip content="退出登录" placement="bottom">
@@ -190,6 +213,16 @@ async function handleLogout() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.25s ease;
+}
+
+.aside.collapsed .logo {
+  justify-content: center;
+  padding: 24px 12px;
+}
+
+.aside.collapsed .sidebar-footer {
+  padding: 12px 8px;
 }
 
 .aside-glow {
@@ -280,6 +313,19 @@ async function handleLogout() {
   box-shadow: var(--cb-glow-cyan);
 }
 
+.sidebar-menu:not(.el-menu--collapse) {
+  width: 100%;
+}
+
+.sidebar-menu.el-menu--collapse {
+  width: 100%;
+}
+
+.sidebar-menu.el-menu--collapse :deep(.el-menu-item) {
+  justify-content: center;
+  padding: 0 !important;
+}
+
 .chat-menu-badge :deep(.el-badge__content) {
   border: none;
 }
@@ -287,6 +333,40 @@ async function handleLogout() {
 .sidebar-footer {
   padding: 16px 20px;
   border-top: 1px solid var(--cb-border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--cb-border);
+  border-radius: 8px;
+  background: rgba(201, 169, 98, 0.06);
+  color: var(--cb-accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.collapse-btn:hover {
+  border-color: var(--cb-accent);
+  box-shadow: var(--cb-glow-cyan);
+  background: rgba(201, 169, 98, 0.1);
+}
+
+.aside.collapsed .collapse-btn {
+  padding: 10px 0;
+}
+
+.collapse-header-btn {
+  flex-shrink: 0;
 }
 
 .sys-status {

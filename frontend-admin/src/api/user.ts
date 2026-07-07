@@ -1,4 +1,5 @@
 import { del, get, post } from './request'
+import type { AdminPermission } from '@/constants/permissions'
 
 export type UserStatus = 'active' | 'frozen'
 
@@ -9,6 +10,7 @@ export interface AdminUser {
   name: string
   avatar: string | null
   role: string
+  permissions?: AdminPermission[] | null
   status: UserStatus
   region: string | null
   account: string
@@ -34,8 +36,25 @@ export interface AdminUserListResult {
   total: number
 }
 
+export interface CreateSubAdminPayload {
+  account: string
+  password: string
+  name: string
+  permissions: AdminPermission[]
+}
+
 export const getUsers = (params?: { keyword?: string; status?: UserStatus }) =>
   get<AdminUserListResult>('/users', { params })
+
+export const getSubAdmins = () => get<AdminUserListResult>('/users/admin/sub-admins')
+
+export const createSubAdmin = (data: CreateSubAdminPayload) =>
+  post<AdminUser>('/users/admin/create-sub-admin', data)
+
+export const updateSubAdminPermissions = (data: {
+  userId: number
+  permissions: AdminPermission[]
+}) => post<AdminUser>('/users/admin/sub-admins/permissions', data)
 
 export const resetUserPassword = (data: ResetPasswordPayload) =>
   post<ResetPasswordResult>('/users/admin/reset-password', data)

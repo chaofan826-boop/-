@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { BannerModule } from './banner/banner.module';
+import { BrowseHistoryModule } from './browse-history/browse-history.module';
 import { ChatModule } from './chat/chat.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { RedisModule } from './common/redis/redis.module';
@@ -38,6 +39,7 @@ import { UserModule } from './user/user.module';
     UserModule,
     CategoryModule,
     BannerModule,
+    BrowseHistoryModule,
     HomeModule,
     PromotionModule,
     ProductModule,

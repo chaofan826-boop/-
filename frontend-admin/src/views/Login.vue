@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import { firstAccessiblePath } from '@/constants/permissions'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -28,7 +29,7 @@ async function handleLogin() {
   try {
     await userStore.login(form.account, form.password)
     ElMessage.success('登录成功')
-    router.push('/dashboard')
+    router.push(firstAccessiblePath(userStore.user))
   } finally {
     loading.value = false
   }

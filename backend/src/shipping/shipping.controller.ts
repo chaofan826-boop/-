@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
-import { Roles } from '../auth/roles.decorator';
+import { AdminRoles } from '../auth/admin-roles.decorator';
+import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { hasAdminPermission } from '../common/constants/admin-permissions';
 import { UserRole } from '../user/entities/user.entity';
 import { CreateShippingDto } from './dto/create-shipping.dto';
 import { ShippingService } from './shipping.service';
@@ -11,7 +13,8 @@ export class ShippingController {
 
   @Post('create')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('orders')
   create(@Body() dto: CreateShippingDto) {
     return this.shippingService.create(dto);
   }
@@ -19,9 +22,12 @@ export class ShippingController {
   @Get('track/:orderNo')
   track(
     @Param('orderNo') orderNo: string,
-    @Request() req: { user: { id: number; role: UserRole } },
+    @Request()
+    req: {
+      user: { id: number; role: UserRole; permissions?: string[] | null };
+    },
   ) {
-    const isAdmin = req.user.role === UserRole.ADMIN;
+    const isAdmin = hasAdminPermission(req.user, 'orders');
     return this.shippingService.track(orderNo, req.user.id, isAdmin);
   }
 }

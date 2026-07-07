@@ -19,6 +19,7 @@ const router = createRouter({
         { path: 'checkout', name: 'Checkout', component: () => import('@/views/Checkout.vue'), meta: { auth: true } },
         { path: 'user', name: 'UserCenter', component: () => import('@/views/UserCenter.vue'), meta: { auth: true } },
         { path: 'orders', name: 'MyOrders', component: () => import('@/views/MyOrders.vue'), meta: { auth: true } },
+        { path: 'browse-history', name: 'BrowseHistory', component: () => import('@/views/BrowseHistory.vue'), meta: { auth: true } },
         { path: 'orders/:orderNo', name: 'OrderDetail', component: () => import('@/views/OrderDetail.vue'), meta: { auth: true } },
       ],
     },

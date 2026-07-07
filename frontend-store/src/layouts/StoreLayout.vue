@@ -44,12 +44,16 @@ type NavLink = {
 const navLinks: NavLink[] = [
   { path: '/', label: '首页' },
   { path: '/cart', label: '购物车' },
+  { path: '/browse-history', label: '浏览记录', auth: true },
   { path: '/orders', label: '我的订单', auth: true },
 ]
 
 const isActive = (path: string) => {
   if (path === '/orders') {
-    return route.path === '/orders' || /^\/orders\/\d+/.test(route.path)
+    return route.path === '/orders' || /^\/orders\/[^/]+/.test(route.path)
+  }
+  if (path === '/browse-history') {
+    return route.path === '/browse-history'
   }
   return route.path === path
 }

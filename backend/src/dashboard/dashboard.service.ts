@@ -4,6 +4,7 @@ import { In, Repository } from 'typeorm';
 import { OrderItem } from '../order/entities/order-item.entity';
 import { Order, OrderStatus } from '../order/entities/order.entity';
 import { Product } from '../product/entities/product.entity';
+import { STAFF_ROLES } from '../common/constants/user-roles';
 import { User, UserRole } from '../user/entities/user.entity';
 import { HotProductsPeriod, HotProductsQueryDto, HotProductsSortBy } from './dto/hot-products-query.dto';
 
@@ -32,7 +33,7 @@ export class DashboardService {
         .innerJoin('order.user', 'user')
         .select('COALESCE(SUM(order.total_amount), 0)', 'total')
         .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-        .andWhere('user.role != :adminRole', { adminRole: UserRole.ADMIN })
+        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
         .andWhere('order.created_at >= :start', { start: todayRange.start })
         .andWhere('order.created_at < :end', { end: todayRange.end })
         .getRawOne<{ total: string }>(),
@@ -41,13 +42,13 @@ export class DashboardService {
         .innerJoin('order.user', 'user')
         .select('COALESCE(SUM(order.total_amount), 0)', 'total')
         .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-        .andWhere('user.role != :adminRole', { adminRole: UserRole.ADMIN })
+        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
         .getRawOne<{ total: string }>(),
       this.orderRepository
         .createQueryBuilder('order')
         .innerJoin('order.user', 'user')
         .where('order.status = :paid', { paid: OrderStatus.PAID })
-        .andWhere('user.role != :adminRole', { adminRole: UserRole.ADMIN })
+        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
         .getCount(),
     ]);
 
@@ -75,7 +76,7 @@ export class DashboardService {
       .addSelect('SUM(item.quantity)', 'quantitySold')
       .addSelect('SUM(item.quantity * item.price)', 'revenue')
       .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-      .andWhere('user.role != :adminRole', { adminRole: UserRole.ADMIN })
+      .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
       .andWhere('order.created_at >= :start', { start: range.start })
       .andWhere('order.created_at < :end', { end: range.end })
       .groupBy('item.product_id')

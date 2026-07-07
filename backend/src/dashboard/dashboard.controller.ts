@@ -1,13 +1,14 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { Roles } from '../auth/roles.decorator';
+import { AdminRoles } from '../auth/admin-roles.decorator';
+import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { UserRole } from '../user/entities/user.entity';
 import { DashboardService } from './dashboard.service';
 import { HotProductsQueryDto } from './dto/hot-products-query.dto';
 
 @Controller('dashboard')
 @UseGuards(RolesGuard)
-@Roles(UserRole.ADMIN)
+@AdminRoles()
+@RequirePermissions('dashboard')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 

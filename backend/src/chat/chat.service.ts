@@ -1,6 +1,8 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { isAdminRole } from '../common/constants/user-roles';
+import { hasAdminPermission } from '../common/constants/admin-permissions';
 import { UserRole } from '../user/entities/user.entity';
 import { CreateQuickReplyDto } from './dto/create-quick-reply.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -9,7 +11,7 @@ import { ChatConversation, ConversationStatus } from './entities/chat-conversati
 import { ChatMessage } from './entities/chat-message.entity';
 import { ChatQuickReply, QuickReplyStatus } from './entities/chat-quick-reply.entity';
 
-type AuthUser = { id: number; role: UserRole };
+type AuthUser = { id: number; role: UserRole; permissions?: string[] | null };
 
 @Injectable()
 export class ChatService {
@@ -100,7 +102,7 @@ export class ChatService {
       order: { id: 'ASC' },
     });
 
-    if (user.role === UserRole.ADMIN) {
+    if (isAdminRole(user.role)) {
       await this.markAdminConversationRead(conversation.id);
     } else if (user.role === UserRole.CUSTOMER) {
       await this.markCustomerConversationRead(conversation.id);
@@ -124,7 +126,7 @@ export class ChatService {
       this.messageRepository.create({
         conversationId: conversation.id,
         senderId: user.id,
-        senderRole: user.role,
+        senderRole: isAdminRole(user.role) ? UserRole.ADMIN : user.role,
         content: dto.content.trim(),
       }),
     );
@@ -195,8 +197,12 @@ export class ChatService {
       throw new NotFoundException('Conversation not found');
     }
 
-    if (user.role !== UserRole.ADMIN && conversation.customerId !== user.id) {
+    if (!isAdminRole(user.role) && conversation.customerId !== user.id) {
       throw new ForbiddenException('Access denied');
+    }
+
+    if (isAdminRole(user.role) && !hasAdminPermission(user, 'chat')) {
+      throw new ForbiddenException('当前账号没有客服消息权限');
     }
 
     return conversation;

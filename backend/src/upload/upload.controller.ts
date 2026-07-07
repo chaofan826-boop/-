@@ -9,10 +9,10 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { join } from 'path';
-import { Roles } from '../auth/roles.decorator';
+import { AdminRoles } from '../auth/admin-roles.decorator';
+import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { UserRole } from '../user/entities/user.entity';
 import { UploadService } from './upload.service';
 
 @Controller('upload')
@@ -45,7 +45,8 @@ export class UploadController {
 
   @Post('product')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('products')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -66,7 +67,8 @@ export class UploadController {
 
   @Post('banner')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('banners')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({

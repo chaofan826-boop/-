@@ -1,9 +1,15 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
+import { isAdminRole, isSuperAdmin, STAFF_ROLES } from '../common/constants/user-roles';
+import {
+  AdminPermission,
+  normalizePermissions,
+} from '../common/constants/admin-permissions';
 import { RedisService } from '../common/redis/redis.service';
 import { validatePhoneForRegion, normalizePhone, getPhoneLookupCandidates } from '../common/utils/phone.util';
+import { CreateSubAdminDto } from './dto/create-sub-admin.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User, UserRole, UserStatus } from './entities/user.entity';
 
@@ -14,6 +20,7 @@ const USER_SELECT = {
   name: true,
   avatar: true,
   role: true,
+  permissions: true,
   status: true,
   region: true,
   lastActiveAt: true,
@@ -58,6 +65,10 @@ export class UserService {
       }
     }
 
+    if (dto.role && isAdminRole(dto.role)) {
+      throw new BadRequestException('不能直接创建管理员账户');
+    }
+
     const user = this.userRepository.create({
       email: dto.email ?? null,
       phone: dto.phone ?? null,
@@ -91,7 +102,7 @@ export class UserService {
         'user.createdAt',
         'user.updatedAt',
       ])
-      .where('user.role != :adminRole', { adminRole: UserRole.ADMIN })
+      .where('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
       .orderBy('user.id', 'DESC');
 
     if (status) {
@@ -148,8 +159,98 @@ export class UserService {
     await this.userRepository.update(userId, { lastActiveAt: new Date() });
   }
 
-  async adminResetPassword(userId: number, newPassword: string) {
-    const user = await this.findCustomerForAdmin(userId);
+  async createSubAdmin(dto: CreateSubAdminDto, actorRole: UserRole) {
+    if (!isSuperAdmin(actorRole)) {
+      throw new ForbiddenException('只有超级管理员可以创建子管理员');
+    }
+
+    const account = dto.account.trim();
+    if (!account) {
+      throw new BadRequestException('登录账号不能为空');
+    }
+
+    const accountExists = await this.userRepository.findOne({
+      where: [{ email: account }, { phone: account }],
+    });
+    if (accountExists) {
+      throw new ConflictException('该登录账号已被使用');
+    }
+
+    const permissions = this.resolveSubAdminPermissions(dto.permissions);
+
+    const user = this.userRepository.create({
+      email: null,
+      phone: account,
+      region: null,
+      name: dto.name.trim(),
+      role: UserRole.SUB_ADMIN,
+      permissions,
+      password: await bcrypt.hash(dto.password, 10),
+    });
+    const saved = await this.userRepository.save(user);
+    const { password: _, ...result } = saved;
+    return result;
+  }
+
+  async findAllSubAdmins(actorRole: UserRole) {
+    if (!isSuperAdmin(actorRole)) {
+      throw new ForbiddenException('只有超级管理员可以查看子管理员列表');
+    }
+
+    const users = await this.userRepository.find({
+      where: { role: UserRole.SUB_ADMIN },
+      select: { ...USER_SELECT },
+      order: { id: 'DESC' },
+    });
+
+    const list = await Promise.all(
+      users.map(async (user) => {
+        const token = await this.redisService.getToken(user.id);
+        return {
+          id: user.id,
+          email: user.email,
+          phone: user.phone,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role,
+          permissions: user.permissions,
+          status: user.status,
+          region: user.region,
+          account: user.email || user.phone || '',
+          isOnline: !!token,
+          lastActiveAt: user.lastActiveAt?.toISOString() ?? null,
+          createdAt: user.createdAt.toISOString(),
+          updatedAt: user.updatedAt.toISOString(),
+        };
+      }),
+    );
+
+    return { list, total: list.length };
+  }
+
+  async updateSubAdminPermissions(
+    userId: number,
+    permissions: AdminPermission[],
+    actorRole: UserRole,
+  ) {
+    if (!isSuperAdmin(actorRole)) {
+      throw new ForbiddenException('只有超级管理员可以修改子管理员权限');
+    }
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || user.role !== UserRole.SUB_ADMIN) {
+      throw new NotFoundException('子管理员不存在');
+    }
+
+    const normalized = this.resolveSubAdminPermissions(permissions);
+    await this.userRepository.update(userId, { permissions: normalized });
+    await this.redisService.deleteToken(userId);
+
+    return this.findOne(userId);
+  }
+
+  async adminResetPassword(userId: number, newPassword: string, actorRole: UserRole) {
+    const user = await this.findManagedUserForAdmin(userId, actorRole);
 
     await this.userRepository.update(userId, {
       password: await bcrypt.hash(newPassword, 10),
@@ -163,8 +264,8 @@ export class UserService {
     };
   }
 
-  async adminUpdateStatus(userId: number, status: UserStatus) {
-    const user = await this.findCustomerForAdmin(userId);
+  async adminUpdateStatus(userId: number, status: UserStatus, actorRole: UserRole) {
+    const user = await this.findManagedUserForAdmin(userId, actorRole);
     await this.userRepository.update(userId, { status });
     if (status === UserStatus.FROZEN) {
       await this.redisService.deleteToken(userId);
@@ -172,21 +273,27 @@ export class UserService {
     return { userId, status };
   }
 
-  async adminDelete(userId: number) {
-    const user = await this.findCustomerForAdmin(userId);
+  async adminDelete(userId: number, actorRole: UserRole) {
+    const user = await this.findManagedUserForAdmin(userId, actorRole);
     await this.redisService.deleteToken(userId);
     await this.userRepository.softDelete(userId);
     return { userId, account: user.email || user.phone || '' };
   }
 
-  private async findCustomerForAdmin(userId: number): Promise<User> {
+  private async findManagedUserForAdmin(userId: number, actorRole: UserRole): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('用户不存在');
     }
+
     if (user.role === UserRole.ADMIN) {
+      throw new BadRequestException('不能操作超级管理员账户');
+    }
+
+    if (user.role === UserRole.SUB_ADMIN && !isSuperAdmin(actorRole)) {
       throw new BadRequestException('不能操作管理员账户');
     }
+
     return user;
   }
 
@@ -203,6 +310,17 @@ export class UserService {
     }
   }
 
+  async findAuthProfile(id: number) {
+    const user = await this.userRepository.findOne({
+      where: { id },
+      select: { id: true, role: true, permissions: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
   async findOne(id: number): Promise<User> {
     const user = await this.userRepository.findOne({
       where: { id },
@@ -217,20 +335,25 @@ export class UserService {
   async findByEmail(email: string): Promise<User | null> {
     return this.userRepository.findOne({
       where: { email },
-      select: { id: true, email: true, phone: true, password: true, name: true, avatar: true, role: true, status: true, region: true, createdAt: true, updatedAt: true },
+      select: { id: true, email: true, phone: true, password: true, name: true, avatar: true, role: true, permissions: true, status: true, region: true, createdAt: true, updatedAt: true },
     });
   }
 
   async findByPhone(phone: string): Promise<User | null> {
     return this.userRepository.findOne({
       where: { phone },
-      select: { id: true, email: true, phone: true, password: true, name: true, avatar: true, role: true, status: true, region: true, createdAt: true, updatedAt: true },
+      select: { id: true, email: true, phone: true, password: true, name: true, avatar: true, role: true, permissions: true, status: true, region: true, createdAt: true, updatedAt: true },
     });
   }
 
   async findByAccount(account: string): Promise<User | null> {
     if (account.includes('@')) {
       return this.findByEmail(account);
+    }
+
+    const directPhone = await this.findByPhone(account);
+    if (directPhone) {
+      return directPhone;
     }
 
     const candidates = getPhoneLookupCandidates(account);
@@ -288,5 +411,13 @@ export class UserService {
     });
 
     return null;
+  }
+
+  private resolveSubAdminPermissions(permissions: AdminPermission[]) {
+    const normalized = normalizePermissions(permissions) ?? [];
+    if (!normalized.length) {
+      throw new BadRequestException('请至少分配一个权限');
+    }
+    return normalized;
   }
 }

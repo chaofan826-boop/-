@@ -47,4 +47,8 @@ export function post<T>(url: string, data?: unknown, config?: AxiosRequestConfig
   return request.post(url, data, config)
 }
 
+export function del<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+  return request.delete(url, config)
+}
+
 export default request

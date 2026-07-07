@@ -10,8 +10,8 @@ export const useUserStore = defineStore('user', () => {
   async function login(account: string, password: string) {
     const res = await loginApi(account, password)
     token.value = res.accessToken
-    user.value = res.user
     setToken(res.accessToken)
+    await fetchProfile()
   }
 
   async function logout() {

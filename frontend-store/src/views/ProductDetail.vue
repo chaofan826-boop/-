@@ -3,15 +3,18 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { formatSpec, formatSalesCount, getProduct, getSkuPrice } from '@/api/product'
+import { recordBrowseHistory } from '@/api/browse-history'
 import { quoteProductPricing } from '@/api/promotion'
 import type { Product, ProductSku } from '@/types/product'
 import { useAppStore } from '@/stores/app'
 import { useCartStore } from '@/stores/cart'
+import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const cartStore = useCartStore()
+const userStore = useUserStore()
 
 const loading = ref(false)
 const product = ref<Product | null>(null)
@@ -173,10 +176,10 @@ async function buyNow() {
   router.push('/cart')
 }
 
-onMounted(async () => {
+async function loadProduct(id: number) {
   loading.value = true
   try {
-    product.value = await getProduct(Number(route.params.id))
+    product.value = await getProduct(id)
     activeImage.value = images.value[0] || ''
     if (product.value.skus?.length) {
       const first = product.value.skus[0]
@@ -185,10 +188,25 @@ onMounted(async () => {
       selectedSize.value = first.size || ''
     }
     await refreshPricing()
+
+    if (userStore.token && product.value) {
+      recordBrowseHistory(product.value.id).catch(() => undefined)
+    }
   } finally {
     loading.value = false
   }
+}
+
+onMounted(() => {
+  loadProduct(Number(route.params.id))
 })
+
+watch(
+  () => route.params.id,
+  (id) => {
+    if (id) loadProduct(Number(id))
+  },
+)
 
 watch(selectedSku, () => {
   refreshPricing()

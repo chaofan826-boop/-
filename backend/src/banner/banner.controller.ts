@@ -10,9 +10,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Public } from '../auth/public.decorator';
-import { Roles } from '../auth/roles.decorator';
+import { AdminRoles } from '../auth/admin-roles.decorator';
+import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { UserRole } from '../user/entities/user.entity';
 import { BannerService } from './banner.service';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { QueryBannerDto } from './dto/query-banner.dto';
@@ -42,21 +42,24 @@ export class BannerController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('banners')
   @Post('settings/update')
   updateSettings(@Body() dto: UpdateBannerSettingsDto) {
     return this.bannerService.updateSettings(dto);
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('banners')
   @Post('create')
   create(@Body() dto: CreateBannerDto) {
     return this.bannerService.create(dto);
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('banners')
   @Post('update')
   update(@Body() dto: UpdateBannerDto) {
     return this.bannerService.update(dto);
@@ -69,7 +72,8 @@ export class BannerController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('banners')
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.bannerService.remove(id);

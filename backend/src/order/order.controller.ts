@@ -10,8 +10,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { IsEnum } from 'class-validator';
-import { Roles } from '../auth/roles.decorator';
+import { AdminRoles } from '../auth/admin-roles.decorator';
+import { RequirePermissions } from '../auth/permissions.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { hasAdminPermission } from '../common/constants/admin-permissions';
 import { UserRole } from '../user/entities/user.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -33,8 +35,13 @@ export class OrderController {
   }
 
   @Get()
-  findAll(@Request() req: { user: { id: number; role: UserRole } }) {
-    const isAdmin = req.user.role === UserRole.ADMIN;
+  findAll(
+    @Request()
+    req: {
+      user: { id: number; role: UserRole; permissions?: string[] | null };
+    },
+  ) {
+    const isAdmin = hasAdminPermission(req.user, 'orders');
     return this.orderService.findAll(isAdmin ? undefined : req.user.id, isAdmin);
   }
 
@@ -45,21 +52,24 @@ export class OrderController {
 
   @Patch(':orderNo/status')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('orders')
   updateStatus(@Param('orderNo') orderNo: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orderService.updateStatus(orderNo, dto.status);
   }
 
   @Patch(':orderNo')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('orders')
   update(@Param('orderNo') orderNo: string, @Body() dto: UpdateOrderDto) {
     return this.orderService.adminUpdate(orderNo, dto);
   }
 
   @Delete(':orderNo')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @AdminRoles()
+  @RequirePermissions('orders')
   remove(@Param('orderNo') orderNo: string) {
     return this.orderService.adminRemove(orderNo);
   }
