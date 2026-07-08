@@ -2,12 +2,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getApplicableCoupons, type UserCoupon } from '@/api/coupon'
 import { getOrders, payOrder, cancelOrder, deleteOrder, type Order } from '@/api/order'
+import CouponPicker from '@/components/CouponPicker.vue'
 import OrderStatusBadge from '@/components/OrderStatusBadge.vue'
 import PaymentMethodPicker from '@/components/PaymentMethodPicker.vue'
 import PendingPayCountdown from '@/components/PendingPayCountdown.vue'
 import { useAppStore } from '@/stores/app'
 import { orderStatusClass, orderStatusLabel, canUserDeleteOrder } from '@/utils/order-status'
+import type { CouponCurrency } from '@/utils/coupon-amount'
 import { DEFAULT_PAYMENT_METHOD, paymentMethodLabel, type PaymentMethod } from '@/utils/payment-method'
 
 const router = useRouter()
@@ -20,8 +23,27 @@ const cancellingOrderNo = ref('')
 const payDialogVisible = ref(false)
 const payTarget = ref<Order | null>(null)
 const paymentMethod = ref<PaymentMethod>(DEFAULT_PAYMENT_METHOD)
+const selectedUserCouponId = ref<number | null>(null)
+const couponOptions = ref<UserCoupon[]>([])
+const couponsLoading = ref(false)
 const orders = ref<Order[]>([])
 const statusFilter = ref('all')
+
+const selectedCoupon = computed(() => {
+  const picked = couponOptions.value.find((item) => item.id === selectedUserCouponId.value)
+  if (!picked || picked.applicable === false) return null
+  return picked
+})
+
+const payAmount = computed(() => {
+  if (!payTarget.value) return 0
+  const discount = selectedCoupon.value?.discountPreview ?? 0
+  return Math.max(0, Number(payTarget.value.totalAmount) - discount)
+})
+
+const payCurrency = computed<CouponCurrency>(() =>
+  payTarget.value?.currency === 'CNY' ? 'CNY' : 'USD',
+)
 
 const statusOptions = [
   { label: '全部', value: 'all' },
@@ -72,7 +94,14 @@ async function handlePay(order: Order, event?: Event) {
   event?.stopPropagation()
   payTarget.value = order
   paymentMethod.value = DEFAULT_PAYMENT_METHOD
+  selectedUserCouponId.value = null
   payDialogVisible.value = true
+  couponsLoading.value = true
+  try {
+    couponOptions.value = await getApplicableCoupons(order.orderNo)
+  } finally {
+    couponsLoading.value = false
+  }
 }
 
 async function confirmPay() {
@@ -80,7 +109,11 @@ async function confirmPay() {
 
   payingOrderNo.value = payTarget.value.orderNo
   try {
-    const updated = await payOrder(payTarget.value.orderNo, paymentMethod.value)
+    const updated = await payOrder(
+      payTarget.value.orderNo,
+      paymentMethod.value,
+      selectedUserCouponId.value,
+    )
     const index = orders.value.findIndex((item) => item.orderNo === payTarget.value?.orderNo)
     if (index >= 0) {
       orders.value[index] = updated
@@ -270,12 +303,18 @@ onMounted(loadOrders)
       </div>
     </div>
 
-    <el-dialog v-model="payDialogVisible" title="选择支付方式" width="520px" destroy-on-close>
+    <el-dialog v-model="payDialogVisible" title="确认支付" width="560px" destroy-on-close>
       <template v-if="payTarget">
         <p class="pay-dialog-summary">
           订单 {{ payTarget.orderNo }} · 应付
-          <strong>{{ appStore.formatPrice(Number(payTarget.totalAmount)) }}</strong>
+          <strong>{{ appStore.formatPrice(payAmount) }}</strong>
         </p>
+        <CouponPicker
+          v-model="selectedUserCouponId"
+          :coupons="couponOptions"
+          :currency="payCurrency"
+          :loading="couponsLoading"
+        />
         <PaymentMethodPicker v-model="paymentMethod" />
       </template>
       <template #footer>

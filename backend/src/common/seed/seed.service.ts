@@ -81,9 +81,24 @@ export class SeedService implements OnModuleInit {
   }
 
   private async seedBanners() {
-    await this.ensureHeroBanner();
+    // Only seed defaults on a truly empty banners table.
+    // Soft-deleted rows still count, so deleting a banner won't make it reappear on restart.
+    const total = await this.bannerRepository.count({ withDeleted: true });
+    this.copyHeroBannerAsset();
 
-    const defaults = [
+    if (total > 0) {
+      this.logger.log('Banners already exist, skip banner seed');
+      return;
+    }
+
+    await this.bannerRepository.save([
+      {
+        title: { zh: '全球臻品 尊享直邮', en: 'Premium Global Collection' },
+        imageUrl: '/api/uploads/banners/banner-hero-premium.svg',
+        linkUrl: '/',
+        sortOrder: 0,
+        status: BannerStatus.ACTIVE,
+      },
       {
         title: { zh: '数码电子 新品上市', en: 'New Electronics Arrivals' },
         imageUrl: 'https://picsum.photos/seed/cb-banner-2/1400/480',
@@ -98,45 +113,9 @@ export class SeedService implements OnModuleInit {
         sortOrder: 3,
         status: BannerStatus.ACTIVE,
       },
-    ];
-
-    for (const item of defaults) {
-      const existing = await this.bannerRepository.findOne({ where: { imageUrl: item.imageUrl } });
-      if (!existing) {
-        await this.bannerRepository.save(item);
-      }
-    }
+    ]);
 
     this.logger.log('Default banners seeded');
-  }
-
-  private async ensureHeroBanner() {
-    this.copyHeroBannerAsset();
-
-    const imageUrl = '/api/uploads/banners/banner-hero-premium.svg';
-    let banner = await this.bannerRepository.findOne({ where: { imageUrl } });
-
-    if (!banner) {
-      await this.bannerRepository.save({
-        title: { zh: '全球臻品 尊享直邮', en: 'Premium Global Collection' },
-        imageUrl,
-        linkUrl: '/',
-        sortOrder: 0,
-        status: BannerStatus.ACTIVE,
-      });
-      this.logger.log('Hero premium banner seeded');
-      return;
-    }
-
-    const patch: Partial<Banner> = {};
-    if (banner.sortOrder !== 0) patch.sortOrder = 0;
-    if (banner.status !== BannerStatus.ACTIVE) patch.status = BannerStatus.ACTIVE;
-    if (!banner.title) {
-      patch.title = { zh: '全球臻品 尊享直邮', en: 'Premium Global Collection' };
-    }
-    if (Object.keys(patch).length) {
-      await this.bannerRepository.update(banner.id, patch);
-    }
   }
 
   private copyHeroBannerAsset() {

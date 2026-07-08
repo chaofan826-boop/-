@@ -7,7 +7,7 @@ import { getChatUnreadCount } from '@/api/chat'
 import { hasPermission } from '@/constants/permissions'
 import { isSuperAdmin, roleLabel } from '@/constants/roles'
 import { useUserStore } from '@/stores/user'
-import { DataBoard, ChatDotRound, Document, Expand, Fold, Goods, Menu, Picture, Promotion, ShoppingCart, SwitchButton, User, UserFilled, Avatar } from '@element-plus/icons-vue'
+import { DataBoard, ChatDotRound, Document, Expand, Fold, Goods, Menu, Picture, Promotion, ShoppingCart, SwitchButton, Ticket, User, UserFilled, Avatar } from '@element-plus/icons-vue'
 import type { AdminPermission } from '@/constants/permissions'
 
 const route = useRoute()
@@ -21,6 +21,7 @@ const menuItems = [
   { index: '/categories', label: '商品分类', icon: Menu, permission: 'products' as AdminPermission },
   { index: '/banners', label: '轮播图', icon: Picture, permission: 'banners' as AdminPermission },
   { index: '/promotions', label: '首页营销', icon: Promotion, permission: 'promotions' as AdminPermission },
+  { index: '/coupons', label: '优惠券', icon: Ticket, permission: 'promotions' as AdminPermission },
   { index: '/orders', label: '订单管理', icon: ShoppingCart, permission: 'orders' as AdminPermission },
   { index: '/users', label: '用户管理', icon: UserFilled, permission: 'users' as AdminPermission },
   { index: '/sub-admins', label: '子管理员', icon: Avatar, superAdminOnly: true },

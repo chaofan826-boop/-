@@ -19,6 +19,17 @@ export interface OrderItem {
   }
 }
 
+export interface OrderUsedCoupon {
+  userCouponId: number
+  couponId: number
+  title: { zh?: string; en?: string }
+  discountAmounts: { USD?: number; CNY?: number }
+  minOrderAmounts: { USD?: number; CNY?: number } | null
+  status: string
+  usedAt: string | null
+  discountApplied: number
+}
+
 export interface Order {
   orderNo: string
   userId: number
@@ -27,6 +38,10 @@ export interface Order {
   shippingAddress: string
   paymentMethod?: string | null
   payExpiresAt?: string | null
+  currency?: string
+  userCouponId?: number | null
+  couponDiscount?: number
+  usedCoupon?: OrderUsedCoupon | null
   items: OrderItem[]
   user?: { name: string; email: string | null; phone?: string | null; region?: string | null }
   createdAt: string
@@ -36,6 +51,7 @@ export interface QueryOrdersParams {
   keyword?: string
   status?: string
   paymentMethod?: string
+  couponUsed?: 'yes' | 'no'
   startDate?: string
   endDate?: string
 }

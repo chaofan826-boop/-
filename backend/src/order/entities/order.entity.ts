@@ -56,6 +56,15 @@ export class Order {
   @Column({ name: 'pay_expires_at', type: 'datetime', nullable: true })
   payExpiresAt: Date | null;
 
+  @Column({ type: 'varchar', length: 8, default: 'USD' })
+  currency: string;
+
+  @Column({ name: 'user_coupon_id', type: 'int', nullable: true })
+  userCouponId: number | null;
+
+  @Column({ name: 'coupon_discount', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  couponDiscount: number;
+
   @OneToMany(() => OrderItem, (item) => item.order, { cascade: true })
   items: OrderItem[];
 

@@ -1,4 +1,5 @@
 import { get, post, del } from './request'
+import type { UserCoupon } from '@/api/coupon'
 import type { PaymentMethod } from '@/utils/payment-method'
 
 export interface OrderItem {
@@ -14,6 +15,9 @@ export interface OrderItem {
 export interface Order {
   orderNo: string
   totalAmount: number
+  currency?: string
+  couponDiscount?: number
+  userCouponId?: number | null
   status: string
   shippingAddress: string
   paymentMethod?: PaymentMethod | null
@@ -29,10 +33,21 @@ export const getOrder = (orderNo: string) => get<Order>(`/orders/${orderNo}`)
 export const createOrder = (data: {
   shippingAddress: string
   items: { productSkuId: number; quantity: number; currency?: string }[]
-}) => post<Order>('/orders', data)
+  userCouponId?: number | null
+}) =>
+  post<Order>('/orders', {
+    ...data,
+    ...(data.userCouponId ? { userCouponId: data.userCouponId } : {}),
+  })
 
-export const payOrder = (orderNo: string, paymentMethod: PaymentMethod) =>
-  post<Order>(`/orders/${orderNo}/pay`, { paymentMethod })
+export const previewOrderCoupons = (items: { productSkuId: number; quantity: number; currency?: string }[]) =>
+  post<UserCoupon[]>('/orders/preview-coupons', { items })
+
+export const payOrder = (orderNo: string, paymentMethod: PaymentMethod, userCouponId?: number | null) =>
+  post<Order>(`/orders/${orderNo}/pay`, {
+    paymentMethod,
+    ...(userCouponId ? { userCouponId } : {}),
+  })
 
 export const cancelOrder = (orderNo: string) => post<Order>(`/orders/${orderNo}/cancel`)
 

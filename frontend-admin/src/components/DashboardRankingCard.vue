@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts'
 import { getHotProducts } from '@/api/dashboard'
-import type { HotProductRankItem, HotProductsPeriod, HotProductsSortBy } from '@/types/dashboard'
+import type { DashboardCurrency, HotProductRankItem, HotProductsPeriod, HotProductsSortBy } from '@/types/dashboard'
 
 const props = defineProps<{
   title: string
@@ -16,10 +16,13 @@ const props = defineProps<{
 const loading = ref(false)
 const ranking = ref<HotProductRankItem[]>([])
 const rankingDate = ref('')
+const revenueCurrency = ref<DashboardCurrency>('USD')
 const chartRef = ref<HTMLElement | null>(null)
 const chartInstance = shallowRef<echarts.ECharts | null>(null)
 
 const isRevenue = computed(() => props.metric === 'revenue')
+
+const revenueSymbol = computed(() => (revenueCurrency.value === 'CNY' ? '¥' : '$'))
 
 const rangeLabel = computed(() => {
   if (!rankingDate.value) return ''
@@ -86,11 +89,17 @@ function barColor(rank: number) {
 }
 
 function metricValue(item: HotProductRankItem) {
-  return isRevenue.value ? item.revenue : item.quantitySold
+  if (!isRevenue.value) return item.quantitySold
+  return revenueCurrency.value === 'CNY' ? item.revenueCny : item.revenueUsd
 }
 
 function formatMetricLabel(value: number) {
-  return isRevenue.value ? `$${value.toFixed(2)}` : `${value}`
+  if (!isRevenue.value) return `${value}`
+  return `${revenueSymbol.value}${value.toFixed(2)}`
+}
+
+function formatRevenuePair(item: HotProductRankItem) {
+  return `$${item.revenueUsd.toFixed(2)} / ¥${item.revenueCny.toFixed(2)}`
 }
 
 function renderChart() {
@@ -131,20 +140,21 @@ function renderChart() {
             `<div style="font-weight:600;margin-bottom:6px">${item.title.zh}</div>`,
             `<div style="color:#8a8880;font-size:12px;margin-bottom:8px">${item.spuCode}</div>`,
             `销量：<strong style="color:#c9a962">${item.quantitySold}</strong>`,
-            `<br/>销售额：<strong style="color:#e8d5a3">$${item.revenue.toFixed(2)}</strong>`,
+            `<br/>销售额 (USD)：<strong style="color:#e8d5a3">$${item.revenueUsd.toFixed(2)}</strong>`,
+            `<br/>销售额 (CNY)：<strong style="color:#f87171">¥${item.revenueCny.toFixed(2)}</strong>`,
           ].join('')
         },
       },
       xAxis: {
         type: 'value',
-        name: isRevenue.value ? '销售额 ($)' : '销量',
+        name: isRevenue.value ? `销售额 (${revenueSymbol.value})` : '销量',
         nameTextStyle: { color: '#8a8880', padding: [0, 0, 0, 8] },
         axisLine: { show: false },
         axisTick: { show: false },
         splitLine: { lineStyle: { color: 'rgba(201, 169, 98, 0.08)' } },
         axisLabel: {
           color: '#8a8880',
-          formatter: (value: number) => (isRevenue.value ? `$${value}` : `${value}`),
+          formatter: (value: number) => (isRevenue.value ? `${revenueSymbol.value}${value}` : `${value}`),
         },
       },
       yAxis: {
@@ -197,6 +207,7 @@ async function loadRanking() {
     const res = await getHotProducts({
       period: props.period,
       sortBy: props.metric,
+      ...(isRevenue.value ? { currency: revenueCurrency.value } : {}),
       ...(date ? { date } : {}),
     })
     ranking.value = res.list
@@ -209,7 +220,7 @@ async function loadRanking() {
 }
 
 watch(
-  () => [props.period, props.selectedDate] as const,
+  () => [props.period, props.selectedDate, revenueCurrency.value] as const,
   () => {
     loadRanking()
   },
@@ -240,6 +251,15 @@ onUnmounted(() => {
         <h3 class="section-title">{{ title }}</h3>
         <p v-if="rangeLabel" class="section-sub">{{ rangeLabel }} · Top 10</p>
       </div>
+      <el-radio-group
+        v-if="isRevenue"
+        v-model="revenueCurrency"
+        size="small"
+        class="currency-toggle"
+      >
+        <el-radio-button value="USD">USD</el-radio-button>
+        <el-radio-button value="CNY">CNY</el-radio-button>
+      </el-radio-group>
     </div>
 
     <div v-loading="loading" class="ranking-body">
@@ -252,8 +272,8 @@ onUnmounted(() => {
             <img :src="productThumb(item)" :alt="item.title.zh" class="legend-thumb" />
             <div class="legend-meta">
               <strong>{{ item.title.zh }}</strong>
-              <span v-if="isRevenue">销量 {{ item.quantitySold }}</span>
-              <span v-else>${{ item.revenue.toFixed(2) }}</span>
+              <span v-if="isRevenue">{{ formatRevenuePair(item) }}</span>
+              <span v-else>销量 {{ item.quantitySold }}</span>
             </div>
           </div>
         </div>
@@ -273,7 +293,15 @@ onUnmounted(() => {
 }
 
 .ranking-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 20px;
+}
+
+.currency-toggle {
+  flex-shrink: 0;
 }
 
 .section-tag {

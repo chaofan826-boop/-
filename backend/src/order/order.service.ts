@@ -4,11 +4,13 @@ import { DataSource, IsNull, Repository } from 'typeorm';
 import { ProductSku } from '../product/entities/product-sku.entity';
 import { ProductService } from '../product/product.service';
 import { ProductPricingService } from '../promotion/product-pricing.service';
+import { CouponService } from '../coupon/coupon.service';
 import { STAFF_ROLES } from '../common/constants/user-roles';
 import { batchDeleteErrorMessage } from '../common/utils/batch-delete.util';
 import { UserRole } from '../user/entities/user.entity';
 import { Shipping } from '../shipping/entities/shipping.entity';
 import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
+import { PreviewOrderCouponsDto } from './dto/preview-order-coupons.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderItem } from './entities/order-item.entity';
@@ -27,6 +29,7 @@ export class OrderService implements OnModuleInit {
     private readonly orderItemRepository: Repository<OrderItem>,
     private readonly productService: ProductService,
     private readonly productPricingService: ProductPricingService,
+    private readonly couponService: CouponService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -34,10 +37,16 @@ export class OrderService implements OnModuleInit {
     await this.backfillOrderNumbers();
     await this.ensureOrderNoIndex();
     await this.backfillPayExpiresAt();
+    await this.backfillOrderCurrency();
   }
 
   async create(userId: number, dto: CreateOrderDto) {
     const mergedItems = this.mergeOrderItems(dto.items);
+
+    if (dto.userCouponId) {
+      const preview = await this.buildOrderPreview(mergedItems);
+      await this.couponService.applyCouponToOrder(userId, preview, dto.userCouponId);
+    }
 
     return this.dataSource.transaction(async (manager) => {
       let totalAmount = 0;
@@ -84,9 +93,11 @@ export class OrderService implements OnModuleInit {
         orderNo: await this.createUniqueOrderNo(manager.getRepository(Order)),
         userId,
         totalAmount,
+        currency,
         shippingAddress: dto.shippingAddress,
         status: OrderStatus.PENDING,
         payExpiresAt: buildPendingPayExpiresAt(),
+        userCouponId: dto.userCouponId ?? null,
         items: orderItems as OrderItem[],
       });
 
@@ -130,6 +141,16 @@ export class OrderService implements OnModuleInit {
       qb.andWhere('order.payment_method = :paymentMethod', { paymentMethod: query.paymentMethod });
     }
 
+    if (query?.couponUsed === 'yes') {
+      qb.andWhere(
+        '(order.user_coupon_id IS NOT NULL OR COALESCE(order.coupon_discount, 0) > 0)',
+      );
+    } else if (query?.couponUsed === 'no') {
+      qb.andWhere(
+        '(order.user_coupon_id IS NULL AND COALESCE(order.coupon_discount, 0) = 0)',
+      );
+    }
+
     if (query?.keyword?.trim()) {
       const keyword = `%${query.keyword.trim()}%`;
       qb.andWhere(
@@ -168,6 +189,18 @@ export class OrderService implements OnModuleInit {
       order.status = OrderStatus.CANCELLED;
     }
 
+    if (order.userCouponId) {
+      const couponDetail = await this.couponService.getUsedCouponDetail(order.userCouponId);
+      if (couponDetail) {
+        Object.assign(order, {
+          usedCoupon: {
+            ...couponDetail,
+            discountApplied: Number(order.couponDiscount),
+          },
+        });
+      }
+    }
+
     return order;
   }
 
@@ -177,7 +210,23 @@ export class OrderService implements OnModuleInit {
     return this.findOne(orderNo);
   }
 
-  async pay(userId: number, orderNo: string, paymentMethod: PaymentMethod) {
+  async previewApplicableCoupons(userId: number, dto: PreviewOrderCouponsDto) {
+    const preview = await this.buildOrderPreview(this.mergeOrderItems(dto.items));
+    return this.couponService.findApplicableForOrder(userId, preview);
+  }
+
+  async findApplicableCoupons(userId: number, orderNo: string) {
+    const order = await this.findOne(orderNo);
+    if (order.userId !== userId) {
+      throw new ForbiddenException('You can only view coupons for your own orders');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Only pending orders can use coupons');
+    }
+    return this.couponService.findApplicableForOrder(userId, order);
+  }
+
+  async pay(userId: number, orderNo: string, paymentMethod: PaymentMethod, userCouponId?: number) {
     const order = await this.findOne(orderNo);
     if (order.userId !== userId) {
       throw new ForbiddenException('You can only pay your own orders');
@@ -190,11 +239,30 @@ export class OrderService implements OnModuleInit {
       throw new BadRequestException('Order payment window has expired');
     }
 
+    let couponDiscount = 0;
+    let appliedUserCouponId: number | null = null;
+    let finalAmount = Number(order.totalAmount);
+
+    if (userCouponId) {
+      const applied = await this.couponService.applyCouponToOrder(userId, order, userCouponId);
+      couponDiscount = applied.discount;
+      appliedUserCouponId = applied.userCoupon.id;
+      finalAmount = Math.max(0, finalAmount - couponDiscount);
+    }
+
     await this.orderRepository.update(order.id, {
       status: OrderStatus.PAID,
       paymentMethod,
       payExpiresAt: null,
+      couponDiscount,
+      userCouponId: appliedUserCouponId,
+      totalAmount: finalAmount,
     });
+
+    if (appliedUserCouponId) {
+      await this.couponService.markCouponUsed(appliedUserCouponId, orderNo);
+    }
+
     return this.findOne(orderNo);
   }
 
@@ -303,6 +371,50 @@ export class OrderService implements OnModuleInit {
     return { deleted, failed };
   }
 
+  /** Build an in-memory order snapshot for coupon evaluation. */
+  private async buildOrderPreview(mergedItems: OrderItemDto[]): Promise<Order> {
+    let totalAmount = 0;
+    const orderItems: OrderItem[] = [];
+    const pricingInputs: { productId: number; productSkuId: number }[] = [];
+    const skuRecords: ProductSku[] = [];
+
+    for (const item of mergedItems) {
+      const sku = await this.productService.findSkuById(item.productSkuId);
+      if (!sku) {
+        throw new NotFoundException(`SKU #${item.productSkuId} not found`);
+      }
+      skuRecords.push(sku);
+      pricingInputs.push({ productId: sku.productId, productSkuId: sku.id });
+    }
+
+    const currency = mergedItems[0]?.currency ?? 'USD';
+    const pricingList = await this.productPricingService.quoteItems(pricingInputs, currency);
+    const pricingMap = new Map(pricingList.map((row) => [row.productSkuId, row]));
+
+    for (let i = 0; i < mergedItems.length; i++) {
+      const item = mergedItems[i];
+      const sku = skuRecords[i];
+      const pricing = pricingMap.get(item.productSkuId);
+      const price = pricing?.salePrice ?? this.productService.getSkuPrice(sku, currency);
+      const product = await this.productService.findOne(sku.productId);
+
+      totalAmount += price * item.quantity;
+      orderItems.push({
+        productId: sku.productId,
+        productSkuId: sku.id,
+        quantity: item.quantity,
+        price,
+        product,
+      } as OrderItem);
+    }
+
+    return {
+      totalAmount,
+      currency,
+      items: orderItems,
+    } as Order;
+  }
+
   /** Merge duplicate SKU lines so stock checks use aggregated quantity. */
   private mergeOrderItems(items: OrderItemDto[]): OrderItemDto[] {
     const map = new Map<number, OrderItemDto>();
@@ -386,6 +498,20 @@ export class OrderService implements OnModuleInit {
         payExpiresAt: buildPendingPayExpiresAt(order.createdAt),
       });
     }
+  }
+
+  private async backfillOrderCurrency() {
+    await this.dataSource.query(`
+      UPDATE orders o
+      INNER JOIN users u ON u.id = o.user_id
+      SET o.currency = 'CNY'
+      WHERE (o.currency IS NULL OR o.currency = '') AND u.region = 'CN'
+    `);
+    await this.dataSource.query(`
+      UPDATE orders
+      SET currency = 'USD'
+      WHERE currency IS NULL OR currency = ''
+    `);
   }
 
   private async backfillOrderNumbers() {

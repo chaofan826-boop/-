@@ -49,6 +49,12 @@ const router = createRouter({
           component: () => import('@/views/Promotions.vue'),
         },
         {
+          path: 'coupons',
+          name: 'Coupons',
+          meta: { title: '优惠券', permission: 'promotions' },
+          component: () => import('@/views/Coupons.vue'),
+        },
+        {
           path: 'orders',
           name: 'Orders',
           meta: { permission: 'orders' },

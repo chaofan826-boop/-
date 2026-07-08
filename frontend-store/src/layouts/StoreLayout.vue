@@ -6,6 +6,7 @@ import { ArrowLeft, Menu, Search, Service, ShoppingCart, Top, User } from '@elem
 import { getChatUnreadCount } from '@/api/chat'
 import { getCategories } from '@/api/product'
 import ChatPanel from '@/components/ChatPanel.vue'
+import FloatingCoupon from '@/components/FloatingCoupon.vue'
 import { useAppStore } from '@/stores/app'
 import { useCartStore } from '@/stores/cart'
 import { useUserStore } from '@/stores/user'
@@ -444,6 +445,8 @@ watch(chatOpen, (open) => {
     </footer>
 
     <ChatPanel v-model:visible="chatOpen" />
+
+    <FloatingCoupon :visible="isHomePage" />
 
     <transition name="float-cart-fade">
       <div v-if="showFloatingCart" class="floating-cart-wrap">

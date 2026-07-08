@@ -12,6 +12,11 @@ export enum HotProductsSortBy {
   REVENUE = 'revenue',
 }
 
+export enum DashboardCurrency {
+  USD = 'USD',
+  CNY = 'CNY',
+}
+
 export class HotProductsQueryDto {
   @IsOptional()
   @IsEnum(HotProductsPeriod)
@@ -20,6 +25,10 @@ export class HotProductsQueryDto {
   @IsOptional()
   @IsEnum(HotProductsSortBy)
   sortBy?: HotProductsSortBy;
+
+  @IsOptional()
+  @IsEnum(DashboardCurrency)
+  currency?: DashboardCurrency;
 
   @IsOptional()
   @IsString()

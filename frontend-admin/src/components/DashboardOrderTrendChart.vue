@@ -60,7 +60,8 @@ function renderChart() {
   const labels = trendDays.value.map((item) => item.label)
   const userCounts = trendDays.value.map((item) => item.orderUserCount)
   const orderCounts = trendDays.value.map((item) => item.orderCount)
-  const amounts = trendDays.value.map((item) => item.orderAmount)
+  const amountsUsd = trendDays.value.map((item) => item.orderAmountUsd)
+  const amountsCny = trendDays.value.map((item) => item.orderAmountCny)
   const showDataZoom = trendDays.value.length > 31
 
   chartInstance.value.setOption(
@@ -95,7 +96,7 @@ function renderChart() {
         top: 0,
         right: 0,
         textStyle: { color: '#b8bcc6' },
-        data: ['下单人数', '订单数', '订单额'],
+        data: ['下单人数', '订单数', '订单额 (USD)', '订单额 (CNY)'],
       },
       tooltip: {
         trigger: 'axis',
@@ -107,7 +108,8 @@ function renderChart() {
           const lines = [`<strong>${date}</strong>`]
           for (const item of params) {
             let value = `${item.value}`
-            if (item.seriesName === '订单额') value = `$${Number(item.value).toFixed(2)}`
+            if (item.seriesName === '订单额 (USD)') value = `$${Number(item.value).toFixed(2)}`
+            else if (item.seriesName === '订单额 (CNY)') value = `¥${Number(item.value).toFixed(2)}`
             else if (item.seriesName === '下单人数') value = `${item.value} 人`
             else if (item.seriesName === '订单数') value = `${item.value} 单`
             lines.push(`${item.seriesName}：${value}`)
@@ -138,7 +140,7 @@ function renderChart() {
         },
         {
           type: 'value',
-          name: '订单额 ($)',
+          name: '订单额',
           nameTextStyle: { color: '#e8d5a3', padding: [0, 8, 0, 0] },
           axisLabel: {
             color: '#9a9690',
@@ -183,19 +185,36 @@ function renderChart() {
           },
         },
         {
-          name: '订单额',
+          name: '订单额 (USD)',
           type: 'line',
           smooth: true,
           symbol: 'circle',
           symbolSize: 8,
           yAxisIndex: 1,
-          data: amounts,
+          data: amountsUsd,
           lineStyle: { width: 3, color: '#e8d5a3' },
           itemStyle: { color: '#c9a962', borderColor: '#0a0a0c', borderWidth: 2 },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: 'rgba(201, 169, 98, 0.24)' },
               { offset: 1, color: 'rgba(201, 169, 98, 0.02)' },
+            ]),
+          },
+        },
+        {
+          name: '订单额 (CNY)',
+          type: 'line',
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 8,
+          yAxisIndex: 1,
+          data: amountsCny,
+          lineStyle: { width: 3, color: '#f87171' },
+          itemStyle: { color: '#ef4444', borderColor: '#0a0a0c', borderWidth: 2 },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(239, 68, 68, 0.18)' },
+              { offset: 1, color: 'rgba(239, 68, 68, 0.02)' },
             ]),
           },
         },

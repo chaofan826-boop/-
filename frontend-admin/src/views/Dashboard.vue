@@ -13,8 +13,10 @@ const stats = ref({
   products: 0,
   active: 0,
   totalUsers: 0,
-  todaySales: 0,
-  totalSales: 0,
+  todaySalesUsd: 0,
+  todaySalesCny: 0,
+  totalSalesUsd: 0,
+  totalSalesCny: 0,
   pendingShipmentCount: 0,
 })
 
@@ -56,8 +58,10 @@ async function loadStats() {
   ])
 
   stats.value.totalUsers = overview.totalUsers
-  stats.value.todaySales = overview.todaySales
-  stats.value.totalSales = overview.totalSales
+  stats.value.todaySalesUsd = overview.todaySalesUsd
+  stats.value.todaySalesCny = overview.todaySalesCny
+  stats.value.totalSalesUsd = overview.totalSalesUsd
+  stats.value.totalSalesCny = overview.totalSalesCny
   stats.value.pendingShipmentCount = overview.pendingShipmentCount
   stats.value.products = res.total
   stats.value.active = activeRes.total
@@ -91,7 +95,10 @@ onMounted(async () => {
         <div class="stat-card stat-card-sales">
           <div class="stat-glow stat-glow-sales" />
           <p class="stat-label">今日销售额</p>
-          <el-statistic :value="stats.todaySales" prefix="$" :precision="2" />
+          <div class="dual-currency">
+            <el-statistic :value="stats.todaySalesUsd" prefix="$" :precision="2" />
+            <el-statistic :value="stats.todaySalesCny" prefix="¥" :precision="2" class="cny-stat" />
+          </div>
         </div>
       </el-col>
       <el-col :xs="24" :sm="12" :md="8" :xl="4">
@@ -120,7 +127,10 @@ onMounted(async () => {
         <div class="stat-card stat-card-total-sales">
           <div class="stat-glow stat-glow-total-sales" />
           <p class="stat-label">平台总销售额</p>
-          <el-statistic :value="stats.totalSales" prefix="$" :precision="2" />
+          <div class="dual-currency">
+            <el-statistic :value="stats.totalSalesUsd" prefix="$" :precision="2" />
+            <el-statistic :value="stats.totalSalesCny" prefix="¥" :precision="2" class="cny-stat" />
+          </div>
         </div>
       </el-col>
     </el-row>
@@ -297,6 +307,26 @@ onMounted(async () => {
 .stat-card-total-sales :deep(.el-statistic__content) {
   color: var(--cb-neon-purple) !important;
   text-shadow: 0 0 16px rgba(139, 115, 85, 0.4) !important;
+}
+
+.dual-currency {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.dual-currency :deep(.el-statistic__head) {
+  display: none;
+}
+
+.dual-currency :deep(.el-statistic__content) {
+  font-size: 22px;
+}
+
+.dual-currency .cny-stat :deep(.el-statistic__content) {
+  font-size: 18px;
+  opacity: 0.88;
 }
 
 .stat-label {

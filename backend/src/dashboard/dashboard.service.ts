@@ -6,7 +6,7 @@ import { Order, OrderStatus } from '../order/entities/order.entity';
 import { Product } from '../product/entities/product.entity';
 import { STAFF_ROLES } from '../common/constants/user-roles';
 import { User, UserRole } from '../user/entities/user.entity';
-import { HotProductsPeriod, HotProductsQueryDto, HotProductsSortBy } from './dto/hot-products-query.dto';
+import { HotProductsPeriod, HotProductsQueryDto, HotProductsSortBy, DashboardCurrency } from './dto/hot-products-query.dto';
 
 type DateRange = { start: Date; end: Date; label: string };
 
@@ -26,24 +26,10 @@ export class DashboardService {
   async getOverview() {
     const todayRange = this.resolveDateRange(HotProductsPeriod.DAY);
 
-    const [totalUsers, todaySalesRow, totalSalesRow, pendingShipmentCount] = await Promise.all([
+    const [totalUsers, todaySales, totalSales, pendingShipmentCount] = await Promise.all([
       this.userRepository.count({ where: { role: UserRole.CUSTOMER } }),
-      this.orderRepository
-        .createQueryBuilder('order')
-        .innerJoin('order.user', 'user')
-        .select('COALESCE(SUM(order.total_amount), 0)', 'total')
-        .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
-        .andWhere('order.created_at >= :start', { start: todayRange.start })
-        .andWhere('order.created_at < :end', { end: todayRange.end })
-        .getRawOne<{ total: string }>(),
-      this.orderRepository
-        .createQueryBuilder('order')
-        .innerJoin('order.user', 'user')
-        .select('COALESCE(SUM(order.total_amount), 0)', 'total')
-        .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
-        .getRawOne<{ total: string }>(),
+      this.sumSalesByCurrency(todayRange),
+      this.sumSalesByCurrency(),
       this.orderRepository
         .createQueryBuilder('order')
         .innerJoin('order.user', 'user')
@@ -54,8 +40,10 @@ export class DashboardService {
 
     return {
       totalUsers,
-      todaySales: Number(Number(todaySalesRow?.total ?? 0).toFixed(2)),
-      totalSales: Number(Number(totalSalesRow?.total ?? 0).toFixed(2)),
+      todaySalesUsd: todaySales.USD,
+      todaySalesCny: todaySales.CNY,
+      totalSalesUsd: totalSales.USD,
+      totalSalesCny: totalSales.CNY,
       pendingShipmentCount,
       date: todayRange.label,
     };
@@ -64,29 +52,56 @@ export class DashboardService {
   async getOrderTrends(query: { startDate?: string; endDate?: string } = {}) {
     const range = this.resolveTrendRange(query.startDate, query.endDate);
 
-    const rows = await this.orderRepository
-      .createQueryBuilder('order')
-      .innerJoin('order.user', 'user')
-      .select('DATE(order.created_at)', 'day')
-      .addSelect('COUNT(DISTINCT order.user_id)', 'orderUserCount')
-      .addSelect('COUNT(order.id)', 'orderCount')
-      .addSelect('COALESCE(SUM(order.total_amount), 0)', 'orderAmount')
-      .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
-      .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
-      .andWhere('order.created_at >= :start', { start: range.start })
-      .andWhere('order.created_at < :end', { end: range.end })
-      .groupBy('DATE(order.created_at)')
-      .orderBy('day', 'ASC')
-      .getRawMany<{ day: string | Date; orderUserCount: string; orderCount: string; orderAmount: string }>();
+    const [countRows, amountRows] = await Promise.all([
+      this.orderRepository
+        .createQueryBuilder('order')
+        .innerJoin('order.user', 'user')
+        .select('DATE(order.created_at)', 'day')
+        .addSelect('COUNT(DISTINCT order.user_id)', 'orderUserCount')
+        .addSelect('COUNT(order.id)', 'orderCount')
+        .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
+        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
+        .andWhere('order.created_at >= :start', { start: range.start })
+        .andWhere('order.created_at < :end', { end: range.end })
+        .groupBy('DATE(order.created_at)')
+        .orderBy('day', 'ASC')
+        .getRawMany<{ day: string | Date; orderUserCount: string; orderCount: string }>(),
+      this.orderRepository
+        .createQueryBuilder('order')
+        .innerJoin('order.user', 'user')
+        .select('DATE(order.created_at)', 'day')
+        .addSelect('order.currency', 'currency')
+        .addSelect('COALESCE(SUM(order.total_amount), 0)', 'orderAmount')
+        .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
+        .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
+        .andWhere('order.created_at >= :start', { start: range.start })
+        .andWhere('order.created_at < :end', { end: range.end })
+        .groupBy('DATE(order.created_at)')
+        .addGroupBy('order.currency')
+        .orderBy('day', 'ASC')
+        .getRawMany<{ day: string | Date; currency: string; orderAmount: string }>(),
+    ]);
 
-    const rowMap = new Map<string, { orderUserCount: number; orderCount: number; orderAmount: number }>();
-    for (const row of rows) {
+    const countMap = new Map<string, { orderUserCount: number; orderCount: number }>();
+    for (const row of countRows) {
       const dayKey = this.normalizeDayKey(row.day);
-      rowMap.set(dayKey, {
+      countMap.set(dayKey, {
         orderUserCount: Number(row.orderUserCount),
         orderCount: Number(row.orderCount),
-        orderAmount: Number(Number(row.orderAmount).toFixed(2)),
       });
+    }
+
+    const amountMap = new Map<string, { USD: number; CNY: number }>();
+    for (const row of amountRows) {
+      const dayKey = this.normalizeDayKey(row.day);
+      const current = amountMap.get(dayKey) ?? { USD: 0, CNY: 0 };
+      const amount = Number(row.orderAmount);
+      if (row.currency === 'CNY') {
+        current.CNY += amount;
+      } else {
+        current.USD += amount;
+      }
+      amountMap.set(dayKey, current);
     }
 
     const dayCount = this.countDaysInclusive(range.start, range.end);
@@ -96,13 +111,15 @@ export class DashboardService {
       const date = new Date(range.start);
       date.setDate(date.getDate() + index);
       const dateLabel = this.formatDay(date);
-      const metrics = rowMap.get(dateLabel) ?? { orderUserCount: 0, orderCount: 0, orderAmount: 0 };
+      const counts = countMap.get(dateLabel) ?? { orderUserCount: 0, orderCount: 0 };
+      const amounts = amountMap.get(dateLabel) ?? { USD: 0, CNY: 0 };
       return {
         date: dateLabel,
         label: useShortLabel ? dateLabel.slice(5) : dateLabel,
-        orderUserCount: metrics.orderUserCount,
-        orderCount: metrics.orderCount,
-        orderAmount: metrics.orderAmount,
+        orderUserCount: counts.orderUserCount,
+        orderCount: counts.orderCount,
+        orderAmountUsd: Number(amounts.USD.toFixed(2)),
+        orderAmountCny: Number(amounts.CNY.toFixed(2)),
       };
     });
 
@@ -117,8 +134,8 @@ export class DashboardService {
   async getHotProducts(query: HotProductsQueryDto) {
     const period = query.period ?? HotProductsPeriod.DAY;
     const sortBy = query.sortBy ?? HotProductsSortBy.QUANTITY;
+    const currency = query.currency ?? DashboardCurrency.USD;
     const range = this.resolveDateRange(period, query.date);
-    const orderField = sortBy === HotProductsSortBy.REVENUE ? 'revenue' : 'quantitySold';
 
     const rowsQuery = this.orderItemRepository
       .createQueryBuilder('item')
@@ -126,6 +143,7 @@ export class DashboardService {
       .innerJoin('order.user', 'user')
       .innerJoin('item.product', 'product')
       .select('item.product_id', 'productId')
+      .addSelect('order.currency', 'currency')
       .addSelect('SUM(item.quantity)', 'quantitySold')
       .addSelect('SUM(item.quantity * item.price)', 'revenue')
       .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
@@ -139,15 +157,55 @@ export class DashboardService {
 
     const rows = await rowsQuery
       .groupBy('item.product_id')
-      .orderBy(orderField, 'DESC')
-      .limit(10)
+      .addGroupBy('order.currency')
       .getRawMany<{
         productId: string;
+        currency: string;
         quantitySold: string;
         revenue: string;
       }>();
 
-    const productIds = rows.map((row) => Number(row.productId)).filter((id) => Number.isFinite(id));
+    const productMetrics = new Map<
+      number,
+      { quantitySold: number; revenueUsd: number; revenueCny: number }
+    >();
+
+    for (const row of rows) {
+      const productId = Number(row.productId);
+      if (!Number.isFinite(productId)) continue;
+
+      const current = productMetrics.get(productId) ?? {
+        quantitySold: 0,
+        revenueUsd: 0,
+        revenueCny: 0,
+      };
+      current.quantitySold += Number(row.quantitySold);
+      const revenue = Number(row.revenue);
+      if (row.currency === 'CNY') {
+        current.revenueCny += revenue;
+      } else {
+        current.revenueUsd += revenue;
+      }
+      productMetrics.set(productId, current);
+    }
+
+    const sortedProducts = [...productMetrics.entries()]
+      .map(([productId, metrics]) => ({
+        productId,
+        quantitySold: metrics.quantitySold,
+        revenueUsd: Number(metrics.revenueUsd.toFixed(2)),
+        revenueCny: Number(metrics.revenueCny.toFixed(2)),
+      }))
+      .sort((a, b) => {
+        if (sortBy === HotProductsSortBy.REVENUE) {
+          const field = currency === DashboardCurrency.CNY ? 'revenueCny' : 'revenueUsd';
+          return b[field] - a[field];
+        }
+        return b.quantitySold - a.quantitySold;
+      })
+      .slice(0, 10);
+
+    const productIds = sortedProducts.map((row) => row.productId);
     const products =
       productIds.length > 0
         ? await this.productRepository.find({ where: { id: In(productIds) } })
@@ -157,21 +215,60 @@ export class DashboardService {
     return {
       period,
       sortBy,
+      currency: sortBy === HotProductsSortBy.REVENUE ? currency : undefined,
       date: range.label,
       startDate: range.start.toISOString(),
       endDate: range.end.toISOString(),
-      list: rows.map((row, index) => {
-        const product = productMap.get(Number(row.productId));
+      list: sortedProducts.map((row, index) => {
+        const product = productMap.get(row.productId);
         return {
           rank: index + 1,
-          productId: Number(row.productId),
+          productId: row.productId,
           spuCode: product?.spuCode ?? '',
           title: product?.title ?? { zh: '未知商品', en: 'Unknown product' },
           mainImage: this.resolveProductImage(product),
-          quantitySold: Number(row.quantitySold),
-          revenue: Number(Number(row.revenue).toFixed(2)),
+          quantitySold: row.quantitySold,
+          revenueUsd: row.revenueUsd,
+          revenueCny: row.revenueCny,
         };
       }),
+    };
+  }
+
+  private async sumSalesByCurrency(range?: DateRange) {
+    const query = this.orderRepository
+      .createQueryBuilder('order')
+      .innerJoin('order.user', 'user')
+      .select('order.currency', 'currency')
+      .addSelect('COALESCE(SUM(order.total_amount), 0)', 'total')
+      .where('order.status != :cancelled', { cancelled: OrderStatus.CANCELLED })
+      .andWhere('user.role NOT IN (:...staffRoles)', { staffRoles: STAFF_ROLES })
+      .groupBy('order.currency');
+
+    if (range) {
+      query
+        .andWhere('order.created_at >= :start', { start: range.start })
+        .andWhere('order.created_at < :end', { end: range.end });
+    }
+
+    const rows = await query.getRawMany<{ currency: string; total: string }>();
+    return this.parseSalesByCurrency(rows);
+  }
+
+  private parseSalesByCurrency(rows: { currency: string; total: string }[]) {
+    let usd = 0;
+    let cny = 0;
+    for (const row of rows) {
+      const total = Number(row.total);
+      if (row.currency === 'CNY') {
+        cny += total;
+      } else {
+        usd += total;
+      }
+    }
+    return {
+      USD: Number(usd.toFixed(2)),
+      CNY: Number(cny.toFixed(2)),
     };
   }
 

@@ -45,9 +45,15 @@ const query = reactive({
   keyword: '',
   status: '' as string,
   paymentMethod: '' as string,
+  couponUsed: '' as '' | 'yes' | 'no',
   startDate: '',
   endDate: '',
 })
+
+const couponUsedOptions = [
+  { value: 'yes', label: '使用优惠券' },
+  { value: 'no', label: '未使用优惠券' },
+]
 
 const dateRange = ref<[string, string] | null>(null)
 
@@ -127,6 +133,7 @@ function buildQueryParams() {
     keyword: query.keyword.trim() || undefined,
     status: query.status || undefined,
     paymentMethod: query.paymentMethod || undefined,
+    couponUsed: query.couponUsed || undefined,
     startDate: query.startDate || undefined,
     endDate: query.endDate || undefined,
   }
@@ -200,6 +207,7 @@ function resetFilters() {
   query.keyword = ''
   query.status = ''
   query.paymentMethod = ''
+  query.couponUsed = ''
   query.startDate = ''
   query.endDate = ''
   dateRange.value = null
@@ -222,17 +230,48 @@ function itemSpec(item: Order['items'][number]) {
   return formatSpecText(item.productSku)
 }
 
-function formatAmount(amount: number | string) {
-  return `$${Number(amount).toFixed(2)}`
+function formatAmount(amount: number | string, currency = 'USD') {
+  const value = Number(amount).toFixed(2)
+  return currency === 'CNY' ? `¥${value}` : `$${value}`
 }
 
 function itemSubtotal(item: Order['items'][number]) {
   return Number(item.price) * Number(item.quantity)
 }
 
-function orderTotal(row: Order) {
+function orderItemsSubtotal(row: Order) {
   if (!row.items?.length) return Number(row.totalAmount)
   return row.items.reduce((sum, item) => sum + itemSubtotal(item), 0)
+}
+
+function orderTotal(row: Order) {
+  return orderItemsSubtotal(row)
+}
+
+function orderCurrency(row: Order) {
+  return row.currency === 'CNY' ? 'CNY' : 'USD'
+}
+
+function orderUsedCoupon(row: Order) {
+  return Number(row.couponDiscount) > 0 || !!row.userCouponId || !!row.usedCoupon
+}
+
+function orderPaidAmount(row: Order) {
+  if (row.status === 'pending') return null
+  if (Number(row.couponDiscount) > 0) return Number(row.totalAmount)
+  return orderItemsSubtotal(row)
+}
+
+function couponTitle(row: Order) {
+  return row.usedCoupon?.title?.zh || row.usedCoupon?.title?.en || '—'
+}
+
+function couponFaceValue(row: Order) {
+  const currency = orderCurrency(row)
+  const amounts = row.usedCoupon?.discountAmounts
+  if (!amounts) return '—'
+  const value = currency === 'CNY' ? amounts.CNY : amounts.USD
+  return value != null ? formatAmount(value, currency) : '—'
 }
 
 
@@ -546,6 +585,22 @@ onMounted(loadOrders)
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="优惠券">
+          <el-select
+            v-model="query.couponUsed"
+            clearable
+            placeholder="全部"
+            style="width: 140px"
+            @change="handleSearch"
+          >
+            <el-option
+              v-for="item in couponUsedOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="下单时间">
           <el-date-picker
             v-model="dateRange"
@@ -748,8 +803,35 @@ onMounted(loadOrders)
             <el-descriptions-item label="下单时间">
               {{ new Date(detailOrder.createdAt).toLocaleString() }}
             </el-descriptions-item>
-            <el-descriptions-item label="订单金额">
-              <span class="detail-amount">{{ formatAmount(orderTotal(detailOrder)) }}</span>
+            <el-descriptions-item label="结算币种">
+              {{ orderCurrency(detailOrder) === 'CNY' ? '人民币 (CNY)' : '美元 (USD)' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="商品合计">
+              <span class="detail-amount">
+                {{ formatAmount(orderItemsSubtotal(detailOrder), orderCurrency(detailOrder)) }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="使用优惠券">
+              {{ orderUsedCoupon(detailOrder) ? '是' : '否' }}
+            </el-descriptions-item>
+            <template v-if="orderUsedCoupon(detailOrder)">
+              <el-descriptions-item label="优惠券名称">
+                {{ couponTitle(detailOrder) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="优惠券面额">
+                {{ couponFaceValue(detailOrder) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="优惠券抵扣">
+                <span class="detail-discount">
+                  -{{ formatAmount(Number(detailOrder.couponDiscount || 0), orderCurrency(detailOrder)) }}
+                </span>
+              </el-descriptions-item>
+            </template>
+            <el-descriptions-item label="用户实付">
+              <span v-if="orderPaidAmount(detailOrder) != null" class="detail-amount detail-paid">
+                {{ formatAmount(orderPaidAmount(detailOrder)!, orderCurrency(detailOrder)) }}
+              </span>
+              <span v-else class="sub-text">待支付</span>
             </el-descriptions-item>
             <el-descriptions-item
               v-if="detailOrder.status === 'pending' && detailOrder.payExpiresAt"
@@ -1164,6 +1246,15 @@ onMounted(loadOrders)
   font-family: var(--cb-font-display);
   font-weight: 700;
   color: var(--cb-accent);
+}
+
+.detail-discount {
+  color: #e6a23c;
+  font-weight: 600;
+}
+
+.detail-paid {
+  color: #67c23a;
 }
 
 .detail-section-title {

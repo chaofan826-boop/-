@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getApplicableCoupons, type UserCoupon } from '@/api/coupon'
 import { getOrder, payOrder, cancelOrder, deleteOrder, type Order } from '@/api/order'
+import CouponPicker from '@/components/CouponPicker.vue'
 import OrderStatusBadge from '@/components/OrderStatusBadge.vue'
 import PaymentMethodPicker from '@/components/PaymentMethodPicker.vue'
 import PendingPayCountdown from '@/components/PendingPayCountdown.vue'
 import { trackShipping, type ShippingTrack } from '@/api/shipping'
 import { useAppStore } from '@/stores/app'
 import { DEFAULT_PAYMENT_METHOD, paymentMethodLabel, type PaymentMethod } from '@/utils/payment-method'
+import type { CouponCurrency } from '@/utils/coupon-amount'
 import { canUserDeleteOrder, orderStatusLabel } from '@/utils/order-status'
 
 const route = useRoute()
@@ -19,9 +22,28 @@ const loading = ref(false)
 const paying = ref(false)
 const deleting = ref(false)
 const cancelling = ref(false)
+const couponsLoading = ref(false)
 const paymentMethod = ref<PaymentMethod>(DEFAULT_PAYMENT_METHOD)
+const selectedUserCouponId = ref<number | null>(null)
+const couponOptions = ref<UserCoupon[]>([])
 const order = ref<Order | null>(null)
 const shipping = ref<ShippingTrack | null>(null)
+
+const selectedCoupon = computed(() => {
+  const picked = couponOptions.value.find((item) => item.id === selectedUserCouponId.value)
+  if (!picked || picked.applicable === false) return null
+  return picked
+})
+
+const payAmount = computed(() => {
+  if (!order.value) return 0
+  const discount = selectedCoupon.value?.discountPreview ?? 0
+  return Math.max(0, Number(order.value.totalAmount) - discount)
+})
+
+const orderCurrency = computed<CouponCurrency>(() =>
+  order.value?.currency === 'CNY' ? 'CNY' : 'USD',
+)
 
 const shippingStatusMap: Record<string, string> = {
   in_transit: '运输中',
@@ -39,6 +61,35 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleString()
 }
 
+async function loadApplicableCoupons() {
+  if (!order.value || order.value.status !== 'pending') {
+    couponOptions.value = []
+    selectedUserCouponId.value = null
+    return
+  }
+
+  couponsLoading.value = true
+  try {
+    couponOptions.value = await getApplicableCoupons(order.value.orderNo)
+    const presetId = order.value.userCouponId ?? null
+    if (
+      presetId &&
+      couponOptions.value.some((item) => item.id === presetId && item.applicable !== false)
+    ) {
+      selectedUserCouponId.value = presetId
+    } else if (
+      selectedUserCouponId.value &&
+      !couponOptions.value.some(
+        (item) => item.id === selectedUserCouponId.value && item.applicable !== false,
+      )
+    ) {
+      selectedUserCouponId.value = null
+    }
+  } finally {
+    couponsLoading.value = false
+  }
+}
+
 async function loadData() {
   const orderNo = String(route.params.orderNo || '')
   if (!orderNo) return
@@ -46,6 +97,7 @@ async function loadData() {
   loading.value = true
   try {
     order.value = await getOrder(orderNo)
+    await loadApplicableCoupons()
     if (order.value.status === 'shipped' || order.value.status === 'completed') {
       try {
         shipping.value = await trackShipping(orderNo)
@@ -61,9 +113,13 @@ async function loadData() {
 async function handlePay() {
   if (!order.value || order.value.status !== 'pending') return
 
+  const discountText = selectedCoupon.value?.discountPreview
+    ? `，优惠券减 ${appStore.formatPrice(selectedCoupon.value.discountPreview)}`
+    : ''
+
   try {
     await ElMessageBox.confirm(
-      `使用${paymentMethodLabel(paymentMethod.value)}支付 ${appStore.formatPrice(Number(order.value.totalAmount))}？`,
+      `使用${paymentMethodLabel(paymentMethod.value)}支付 ${appStore.formatPrice(payAmount.value)}${discountText}？`,
       '确认支付',
       {
         confirmButtonText: '立即支付',
@@ -77,7 +133,7 @@ async function handlePay() {
 
   paying.value = true
   try {
-    order.value = await payOrder(order.value.orderNo, paymentMethod.value)
+    order.value = await payOrder(order.value.orderNo, paymentMethod.value, selectedUserCouponId.value)
     ElMessage.success(`已使用${paymentMethodLabel(order.value.paymentMethod)}支付成功`)
   } finally {
     paying.value = false
@@ -176,6 +232,10 @@ onMounted(loadData)
           <span class="label">订单金额</span>
           <span class="amount">{{ appStore.formatPrice(Number(order.totalAmount)) }}</span>
         </div>
+        <div v-if="Number(order.couponDiscount) > 0" class="info-row">
+          <span class="label">优惠券抵扣</span>
+          <span class="discount">-{{ appStore.formatPrice(Number(order.couponDiscount)) }}</span>
+        </div>
         <div v-if="order.paymentMethod" class="info-row">
           <span class="label">支付方式</span>
           <span>{{ paymentMethodLabel(order.paymentMethod) }}</span>
@@ -192,11 +252,20 @@ onMounted(loadData)
 
       <el-card v-if="order.status === 'pending'" shadow="never" class="action-card">
         <PendingPayCountdown :order="order" @expired="handlePendingExpired" />
+        <CouponPicker
+          v-model="selectedUserCouponId"
+          :coupons="couponOptions"
+          :currency="orderCurrency"
+          :loading="couponsLoading"
+        />
         <PaymentMethodPicker v-model="paymentMethod" class="pending-payment-picker" />
         <div class="pay-bar">
           <div class="pay-info">
             <span class="pay-label">待支付金额</span>
-            <strong class="pay-amount">{{ appStore.formatPrice(Number(order.totalAmount)) }}</strong>
+            <strong class="pay-amount">{{ appStore.formatPrice(payAmount) }}</strong>
+            <span v-if="selectedCoupon?.discountPreview" class="pay-discount">
+              已优惠 {{ appStore.formatPrice(selectedCoupon.discountPreview) }}
+            </span>
           </div>
           <div class="pending-actions">
             <el-button size="large" :loading="cancelling" @click="handleCancel">取消订单</el-button>
@@ -377,6 +446,16 @@ onMounted(loadData)
   font-family: var(--cb-font-display);
   color: var(--cb-neon-cyan);
   font-weight: 700;
+}
+
+.discount {
+  color: #e85d5d;
+  font-weight: 600;
+}
+
+.pay-discount {
+  font-size: 12px;
+  color: #e85d5d;
 }
 
 .order-item {

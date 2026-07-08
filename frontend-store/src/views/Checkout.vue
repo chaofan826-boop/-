@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import type { UserCoupon } from '@/api/coupon'
 import { getShippingAddresses, type ShippingAddress } from '@/api/address'
-import { createOrder, payOrder } from '@/api/order'
-import PaymentMethodPicker from '@/components/PaymentMethodPicker.vue'
+import { createOrder, previewOrderCoupons } from '@/api/order'
+import CouponPicker from '@/components/CouponPicker.vue'
 import { useAppStore } from '@/stores/app'
 import { useCartStore } from '@/stores/cart'
 import { useCheckoutStore } from '@/stores/checkout'
-import { DEFAULT_PAYMENT_METHOD, paymentMethodLabel, type PaymentMethod } from '@/utils/payment-method'
+import type { CouponCurrency } from '@/utils/coupon-amount'
 import { formatShippingAddress } from '@/utils/shipping-address'
 
 const route = useRoute()
@@ -20,9 +21,11 @@ const checkoutStore = useCheckoutStore()
 
 const loading = ref(false)
 const addressLoading = ref(false)
+const couponsLoading = ref(false)
 const addresses = ref<ShippingAddress[]>([])
+const couponOptions = ref<UserCoupon[]>([])
+const selectedUserCouponId = ref<number | null>(null)
 const selectedAddressId = ref<number | 'manual' | null>(null)
-const paymentMethod = ref<PaymentMethod>(DEFAULT_PAYMENT_METHOD)
 
 const isBuyNowMode = computed(() => route.query.mode === 'buy' && !!checkoutStore.buyNowItem)
 
@@ -33,6 +36,21 @@ const checkoutItems = computed(() =>
 const checkoutTotal = computed(() =>
   checkoutItems.value.reduce((sum, item) => sum + item.price * item.quantity, 0),
 )
+
+const checkoutCurrency = computed<CouponCurrency>(() =>
+  checkoutItems.value[0]?.currency === 'CNY' ? 'CNY' : 'USD',
+)
+
+const selectedCoupon = computed(() => {
+  const picked = couponOptions.value.find((item) => item.id === selectedUserCouponId.value)
+  if (!picked || picked.applicable === false) return null
+  return picked
+})
+
+const payableTotal = computed(() => {
+  const discount = selectedCoupon.value?.discountPreview ?? 0
+  return Math.max(0, checkoutTotal.value - discount)
+})
 
 const form = reactive({
   receiverName: '',
@@ -71,6 +89,35 @@ async function loadAddresses() {
   }
 }
 
+async function loadCoupons() {
+  if (!checkoutItems.value.length) {
+    couponOptions.value = []
+    selectedUserCouponId.value = null
+    return
+  }
+
+  couponsLoading.value = true
+  try {
+    couponOptions.value = await previewOrderCoupons(
+      checkoutItems.value.map((item) => ({
+        productSkuId: item.productSkuId,
+        quantity: item.quantity,
+        currency: item.currency,
+      })),
+    )
+    if (
+      selectedUserCouponId.value &&
+      !couponOptions.value.some(
+        (item) => item.id === selectedUserCouponId.value && item.applicable !== false,
+      )
+    ) {
+      selectedUserCouponId.value = null
+    }
+  } finally {
+    couponsLoading.value = false
+  }
+}
+
 async function handleSubmit() {
   if (!form.receiverName || !form.receiverPhone || !form.receiverAddress) {
     ElMessage.warning('请填写完整收货信息')
@@ -83,7 +130,6 @@ async function handleSubmit() {
   }
 
   const shippingAddress = formatShippingAddress(form.receiverName, form.receiverPhone, form.receiverAddress)
-  const totalLabel = appStore.formatPrice(checkoutTotal.value)
 
   loading.value = true
   try {
@@ -94,6 +140,7 @@ async function handleSubmit() {
         quantity: i.quantity,
         currency: i.currency,
       })),
+      userCouponId: selectedUserCouponId.value,
     })
 
     if (isBuyNowMode.value) {
@@ -102,33 +149,16 @@ async function handleSubmit() {
       cartStore.removeSelectedItems()
     }
 
-    if (isBuyNowMode.value) {
-      try {
-        await ElMessageBox.confirm(
-          `使用${paymentMethodLabel(paymentMethod.value)}支付 ${totalLabel}？`,
-          '确认支付',
-          {
-            confirmButtonText: '立即支付',
-            cancelButtonText: '取消支付',
-            type: 'warning',
-          },
-        )
-        await payOrder(order.orderNo, paymentMethod.value)
-        ElMessage.success(`已使用${paymentMethodLabel(paymentMethod.value)}支付成功`)
-        router.push(`/orders/${order.orderNo}`)
-      } catch {
-        ElMessage.info('订单已创建，请在 30 分钟内完成支付')
-        router.push(`/orders/${order.orderNo}`)
-      }
-      return
-    }
-
     ElMessage.success('下单成功，请在 30 分钟内完成支付')
     router.push(`/orders/${order.orderNo}`)
   } finally {
     loading.value = false
   }
 }
+
+watch(checkoutItems, () => {
+  loadCoupons()
+}, { deep: true })
 
 watch(selectedAddressId, (value) => {
   if (typeof value === 'number') {
@@ -155,6 +185,7 @@ onMounted(async () => {
   }
 
   await loadAddresses()
+  await loadCoupons()
 })
 </script>
 
@@ -241,18 +272,25 @@ onMounted(async () => {
             <span>{{ appStore.formatPrice(item.price * item.quantity) }}</span>
           </div>
           <el-divider />
+          <CouponPicker
+            v-model="selectedUserCouponId"
+            :coupons="couponOptions"
+            :currency="checkoutCurrency"
+            :loading="couponsLoading"
+          />
+          <div v-if="selectedCoupon?.discountPreview" class="summary-discount">
+            <span>优惠券抵扣</span>
+            <span>-{{ appStore.formatPrice(selectedCoupon.discountPreview) }}</span>
+          </div>
           <div class="summary-total">
             <span>应付总额</span>
-            <span class="amount">{{ appStore.formatPrice(checkoutTotal) }}</span>
+            <span class="amount">{{ appStore.formatPrice(payableTotal) }}</span>
           </div>
-
-          <PaymentMethodPicker v-if="isBuyNowMode" v-model="paymentMethod" class="payment-section" />
 
           <el-button type="primary" size="large" :loading="loading" class="submit-btn" @click="handleSubmit">
             提交订单
           </el-button>
-          <p v-if="isBuyNowMode" class="buy-tip">先创建待支付订单，确认后将跳转支付；取消支付可在 30 分钟内继续付款</p>
-          <p v-else class="buy-tip">提交后将生成待支付订单，请在 30 分钟内完成支付</p>
+          <p class="buy-tip">提交后将生成待支付订单，请在订单详情或我的订单中选择支付方式并完成付款</p>
         </el-card>
       </el-col>
     </el-row>
@@ -383,6 +421,14 @@ onMounted(async () => {
   color: var(--cb-text-muted);
 }
 
+.summary-discount {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: #e6a23c;
+}
+
 .summary-total {
   display: flex;
   justify-content: space-between;
@@ -398,12 +444,6 @@ onMounted(async () => {
 .submit-btn {
   width: 100%;
   margin-top: 20px;
-}
-
-.payment-section {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px dashed var(--cb-border);
 }
 
 .buy-tip {

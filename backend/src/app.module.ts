@@ -11,6 +11,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { RedisModule } from './common/redis/redis.module';
 import { SeedModule } from './common/seed/seed.module';
 import { CategoryModule } from './category/category.module';
+import { CouponModule } from './coupon/coupon.module';
 import { HomeModule } from './home/home.module';
 import { OrderModule } from './order/order.module';
 import { PromotionModule } from './promotion/promotion.module';
@@ -46,6 +47,7 @@ import { UserModule } from './user/user.module';
     BrowseHistoryModule,
     HomeModule,
     PromotionModule,
+    CouponModule,
     ProductModule,
     OrderModule,
     DashboardModule,

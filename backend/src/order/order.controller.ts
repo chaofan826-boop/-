@@ -19,6 +19,7 @@ import { UserRole } from '../user/entities/user.entity';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { BatchDeleteOrdersDto } from './dto/batch-delete-orders.dto';
 import { PayOrderDto } from './dto/pay-order.dto';
+import { PreviewOrderCouponsDto } from './dto/preview-order-coupons.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus } from './entities/order.entity';
@@ -62,6 +63,22 @@ export class OrderController {
     return this.orderService.adminRemoveMany(dto.orderNos);
   }
 
+  @Post('preview-coupons')
+  previewCoupons(
+    @Request() req: { user: { id: number } },
+    @Body() dto: PreviewOrderCouponsDto,
+  ) {
+    return this.orderService.previewApplicableCoupons(req.user.id, dto);
+  }
+
+  @Get(':orderNo/applicable-coupons')
+  findApplicableCoupons(
+    @Request() req: { user: { id: number } },
+    @Param('orderNo') orderNo: string,
+  ) {
+    return this.orderService.findApplicableCoupons(req.user.id, orderNo);
+  }
+
   @Get(':orderNo')
   findOne(@Param('orderNo') orderNo: string) {
     return this.orderService.findOne(orderNo);
@@ -78,7 +95,7 @@ export class OrderController {
     @Param('orderNo') orderNo: string,
     @Body() dto: PayOrderDto,
   ) {
-    return this.orderService.pay(req.user.id, orderNo, dto.paymentMethod);
+    return this.orderService.pay(req.user.id, orderNo, dto.paymentMethod, dto.userCouponId);
   }
 
   @Patch(':orderNo/status')

@@ -4,6 +4,8 @@ export type HotProductsPeriod = 'day' | 'month' | 'year' | 'all'
 
 export type HotProductsSortBy = 'quantity' | 'revenue'
 
+export type DashboardCurrency = 'USD' | 'CNY'
+
 export interface HotProductRankItem {
   rank: number
   productId: number
@@ -11,12 +13,14 @@ export interface HotProductRankItem {
   title: LocalizedTitle
   mainImage: string | null
   quantitySold: number
-  revenue: number
+  revenueUsd: number
+  revenueCny: number
 }
 
 export interface HotProductsResult {
   period: HotProductsPeriod
   sortBy?: HotProductsSortBy
+  currency?: DashboardCurrency
   date: string
   startDate: string
   endDate: string
@@ -26,13 +30,16 @@ export interface HotProductsResult {
 export interface HotProductsQuery {
   period: HotProductsPeriod
   sortBy?: HotProductsSortBy
+  currency?: DashboardCurrency
   date?: string
 }
 
 export interface DashboardOverview {
   totalUsers: number
-  todaySales: number
-  totalSales: number
+  todaySalesUsd: number
+  todaySalesCny: number
+  totalSalesUsd: number
+  totalSalesCny: number
   pendingShipmentCount: number
   date: string
 }
@@ -42,7 +49,8 @@ export interface DashboardOrderTrendDay {
   label: string
   orderUserCount: number
   orderCount: number
-  orderAmount: number
+  orderAmountUsd: number
+  orderAmountCny: number
 }
 
 export interface DashboardOrderTrends {
